@@ -1,0 +1,3399 @@
+--!nolint
+--[[
+	OmniHub 1.0.0  -  universal Roblox script hub (client side, executor)
+
+	Run:   loadstring(readfile("OmniHub.lua"))()      (or paste the file into your executor)
+
+	Layers (all in this one file, each in its own do-block):
+	  00 kernel     services, signals, ownership + unload, error boundaries, files
+	  01 motion     closed-form springs, tweens, jobs, ONE RenderStepped loop
+	  02 theme      tokens + live bindings (scheme, accent, glass, radius)
+	  03 ui         factory, glass, groups, input wiring, popovers, menus, tooltip, scroll
+	  04 config     flags, debounced save, key binds
+	  05 controls   toggle, slider, dropdown, segmented, button, keybind, input, swatches
+	  06 window     shell, nav, pages, toasts, command palette, island
+	  07..        features: movement, aim, visuals/ESP, players, world, server, utility
+	  09 settings   hub preferences
+	  10 registry   per-game packs:  OmniHub.game{ id, name, places, universes, tabs = function(hub) end }
+	               drop .lua files into workspace/OmniHub/games/ and they are loaded at boot.
+	  99 boot
+
+	Nothing here reads game memory or uses game-specific data: every feature uses public
+	Roblox APIs only. Executor-only APIs (Drawing, mouse1click, setfpscap, setclipboard,
+	writefile ...) are feature-detected and the matching controls say so when missing.
+]]
+
+local genv = (type(getgenv) == "function" and getgenv()) or _G
+if type(genv.OmniHub) == "table" and type(genv.OmniHub.unload) == "function" then
+	pcall(genv.OmniHub.unload)
+end
+local H = { VERSION = "1.0.0", alive = true, bootClock = os.clock(), faults = {}, games = {} }
+genv.OmniHub = H
+H.genv = genv
+
+-- =====================================================================================
+-- 00 kernel
+-- =====================================================================================
+do
+	local cloneref = (type(cloneref) == "function" and cloneref) or function(x) return x end
+	local S = setmetatable({}, { __index = function(t, name)
+		local ok, service = pcall(game.GetService, game, name)
+		if not ok or not service then error("OmniHub: no service " .. tostring(name), 2) end
+		service = cloneref(service)
+		rawset(t, name, service)
+		return service
+	end })
+	H.S = S
+	H.cloneref = cloneref
+	H.LP = S.Players.LocalPlayer
+	H.touch = false
+	pcall(function() H.touch = S.UserInputService.TouchEnabled and not S.UserInputService.MouseEnabled end)
+	H.executor = "Unknown"
+	pcall(function() if type(identifyexecutor) == "function" then H.executor = tostring((identifyexecutor())) end end)
+
+	-- signals
+	local Signal = {}
+	Signal.__index = Signal
+	function Signal.new() return setmetatable({ list = {} }, Signal) end
+	function Signal:connect(fn)
+		local link = { fn = fn, live = true }
+		local list = self.list
+		list[#list + 1] = link
+		return { disconnect = function()
+			if not link.live then return end
+			link.live = false
+			local at = table.find(list, link)
+			if at then table.remove(list, at) end
+		end }
+	end
+	function Signal:fire(...)
+		if #self.list == 0 then return end
+		for _, link in ipairs(table.clone(self.list)) do
+			if link.live then H.try("signal", link.fn, ...) end
+		end
+	end
+	H.Signal = Signal
+	H.onUnload = Signal.new()
+
+	-- faults: one entry a second per scope, newest 50 kept
+	local lastFault = {}
+	function H.fault(scope, err)
+		scope = tostring(scope)
+		local now = os.clock()
+		if lastFault[scope] and now - lastFault[scope] < 1 then return end
+		lastFault[scope] = now
+		local list = H.faults
+		list[#list + 1] = { scope = scope, message = tostring(err), at = now - H.bootClock }
+		if #list > 50 then table.remove(list, 1) end
+		warn("[OmniHub] " .. scope .. ": " .. tostring(err))
+	end
+	local function trace(e) return tostring(e) .. "\n" .. debug.traceback("", 2) end
+	local function tried(scope, ok, ...)
+		if not ok then H.fault(scope, (...)); return nil end
+		return ...
+	end
+	function H.try(scope, fn, ...) return tried(scope, xpcall(fn, trace, ...)) end
+	function H.safe(scope, fn) return function(...) return H.try(scope, fn, ...) end end
+
+	-- ownership: everything the hub creates is torn down in reverse order
+	local owned = {}
+	function H.own(thing) owned[#owned + 1] = thing; return thing end
+	function H.connect(signal, fn, scope)
+		return H.own(signal:Connect(H.safe(scope or "event", fn)))
+	end
+	function H.unload()
+		if not H.alive then return end
+		H.alive = false
+		pcall(function() H.onUnload:fire() end)
+		for i = #owned, 1, -1 do
+			local thing = owned[i]
+			pcall(function()
+				local kind = typeof(thing)
+				if kind == "RBXScriptConnection" then thing:Disconnect()
+				elseif kind == "Instance" then thing:Destroy()
+				elseif kind == "function" then thing()
+				elseif kind == "table" and type(thing.destroy) == "function" then thing:destroy() end
+			end)
+		end
+		table.clear(owned)
+		if genv.OmniHub == H then genv.OmniHub = nil end
+	end
+
+	-- util
+	local util = {}
+	H.util = util
+	function util.clamp01(x) return x < 0 and 0 or (x > 1 and 1 or x) end
+	function util.lerp(a, b, t) return a + (b - a) * t end
+	function util.round(x, step) step = step or 1; return math.floor(x / step + 0.5) * step end
+	function util.hex(text)
+		text = string.gsub(text, "#", "")
+		return Color3.fromRGB(tonumber(string.sub(text, 1, 2), 16) or 0, tonumber(string.sub(text, 3, 4), 16) or 0, tonumber(string.sub(text, 5, 6), 16) or 0)
+	end
+	function util.toHex(c) return string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5)) end
+	function util.luma(c) return 0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B end
+	function util.format(v, d) if d and d > 0 then return string.format("%." .. d .. "f", v) end return tostring(math.floor(v + 0.5)) end
+	function util.copy(v)
+		if type(v) ~= "table" then return v end
+		local out = {}
+		for k, x in pairs(v) do out[k] = util.copy(x) end
+		return out
+	end
+	function util.randomName()
+		local t = {}
+		for i = 1, 12 do t[i] = string.char(math.random(97, 122)) end
+		return table.concat(t)
+	end
+	function util.fuzzy(query, text)
+		query, text = string.lower(query), string.lower(text)
+		if query == "" then return 0 end
+		local score, at, run = 0, 1, 0
+		for i = 1, #query do
+			local ch = string.sub(query, i, i)
+			local found = string.find(text, ch, at, true)
+			if not found then return nil end
+			if found == at then run += 1; score += 2 + run else run = 0 end
+			if found == 1 or string.find(string.sub(text, found - 1, found - 1), "[%s%p]") then score += 3 end
+			score -= (found - at) * 0.05
+			at = found + 1
+		end
+		return score
+	end
+	function util.debounce(delay, fn)
+		local token = 0
+		return function(...)
+			token += 1
+			local mine = token
+			local args = table.pack(...)
+			task.delay(delay, function()
+				if mine == token and H.alive then fn(table.unpack(args, 1, args.n)) end
+			end)
+		end
+	end
+
+	-- executor capabilities, detected once
+	local cap = {}
+	H.cap = cap
+	cap.files = type(writefile) == "function" and type(readfile) == "function" and type(isfile) == "function"
+		and type(makefolder) == "function" and type(isfolder) == "function"
+	cap.drawing = (type(Drawing) == "table" or type(Drawing) == "userdata") and type(Drawing.new) == "function"
+	cap.click = type(mouse1click) == "function"
+	cap.clipboard = type(setclipboard) == "function" or type(toclipboard) == "function"
+	cap.fps = type(setfpscap) == "function"
+	cap.gethui = type(gethui) == "function"
+	cap.request = type(request) == "function" or type(http_request) == "function"
+	cap.listfiles = type(listfiles) == "function"
+	function H.clipboard(text)
+		local set = (type(setclipboard) == "function" and setclipboard) or (type(toclipboard) == "function" and toclipboard)
+		if not set then return false end
+		return (pcall(set, tostring(text)))
+	end
+
+	-- files, under workspace/OmniHub
+	local fs = { ok = cap.files, root = "OmniHub" }
+	H.fs = fs
+	function fs.path(rel) return fs.root .. "/" .. rel end
+	function fs.ensure(folder)
+		if not fs.ok then return false end
+		for _, name in ipairs({ fs.root, folder and (fs.root .. "/" .. folder) or nil }) do
+			local ok, present = pcall(isfolder, name)
+			if not (ok and present) then pcall(makefolder, name) end
+		end
+		return true
+	end
+	function fs.read(rel)
+		if not fs.ok then return nil end
+		local p = fs.path(rel)
+		local ok, present = pcall(isfile, p)
+		if not (ok and present) then return nil end
+		local ok2, data = pcall(readfile, p)
+		return ok2 and data or nil
+	end
+	function fs.write(rel, data)
+		if not fs.ok then return false end
+		fs.ensure()
+		return (pcall(writefile, fs.path(rel), data))
+	end
+	function fs.readJson(rel)
+		local data = fs.read(rel)
+		if not data then return nil end
+		local ok, value = pcall(S.HttpService.JSONDecode, S.HttpService, data)
+		return ok and value or nil
+	end
+	function fs.writeJson(rel, value)
+		local ok, text = pcall(S.HttpService.JSONEncode, S.HttpService, value)
+		return ok and fs.write(rel, text) or false
+	end
+
+	-- GUI roots: hidden container when the executor has one
+	function H.host()
+		if H._host and H._host.Parent then return H._host end
+		local host
+		if cap.gethui then
+			local ok, hidden = pcall(gethui)
+			if ok and typeof(hidden) == "Instance" then host = hidden end
+		end
+		if not host then
+			local ok, core = pcall(function() return cloneref(game:GetService("CoreGui")) end)
+			if ok and core and pcall(function() local f = Instance.new("Folder"); f.Parent = core; f:Destroy() end) then host = core end
+		end
+		if not host then host = H.LP:FindFirstChildOfClass("PlayerGui") or H.LP:WaitForChild("PlayerGui", 10) end
+		H._host = host
+		return host
+	end
+	function H.screen(order, name)
+		local gui = Instance.new("ScreenGui")
+		gui.Name = name or util.randomName()
+		gui.ResetOnSpawn = false
+		gui.IgnoreGuiInset = true
+		gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		gui.DisplayOrder = order or 1000
+		pcall(function() gui.ScreenInsets = Enum.ScreenInsets.None end)
+		if type(syn) == "table" and type(syn.protect_gui) == "function" then pcall(syn.protect_gui, gui) end
+		gui.Parent = H.host()
+		return H.own(gui)
+	end
+
+	-- character helpers
+	function H.character(p) p = p or H.LP; return p and p.Character end
+	function H.humanoid(p) local c = H.character(p); return c and c:FindFirstChildOfClass("Humanoid") end
+	function H.root(p)
+		local c = H.character(p)
+		if not c then return nil end
+		return c:FindFirstChild("HumanoidRootPart") or c.PrimaryPart
+	end
+	function H.camera() return workspace.CurrentCamera end
+	function H.viewport()
+		local cam = workspace.CurrentCamera
+		return cam and cam.ViewportSize or Vector2.new(1920, 1080)
+	end
+	function H.httpGet(url)
+		local req = (type(request) == "function" and request) or (type(http_request) == "function" and http_request)
+		if req then
+			local ok, res = pcall(req, { Url = url, Method = "GET" })
+			if ok and type(res) == "table" and tonumber(res.StatusCode) == 200 and type(res.Body) == "string" then return res.Body end
+		end
+		local ok, body = pcall(function() return game:HttpGet(url) end)
+		if ok and type(body) == "string" then return body end
+		return nil
+	end
+end
+
+-- =====================================================================================
+-- 01 motion  (closed-form springs: same curve at 20 fps and 240 fps; resting springs sleep)
+-- =====================================================================================
+do
+	local S, util = H.S, H.util
+	local Motion = { speed = 1, reduced = false, dt = 1 / 60 }
+	H.Motion = Motion
+	-- { duration (how long the move feels), bounce (0 = critically damped) }
+	Motion.presets = {
+		quick = { 0.16, 0 }, snappy = { 0.24, 0.10 }, smooth = { 0.34, 0 }, gentle = { 0.52, 0 },
+		bouncy = { 0.40, 0.24 }, liquid = { 0.46, 0.30 }, lazy = { 0.90, 0 },
+	}
+	local awake, jobs, tweens, stepping = {}, {}, {}, {}
+	local Spring = {}
+	Spring.__index = Spring
+
+	local function tune(sp, preset)
+		local p = type(preset) == "table" and preset or Motion.presets[preset or "smooth"] or Motion.presets.smooth
+		local duration, bounce = p[1], p[2] or 0
+		if Motion.reduced then duration, bounce = duration * 0.55, 0 end
+		duration = math.max(duration / Motion.speed, 0.02)
+		sp.w0 = 2 * math.pi / duration
+		sp.zeta = math.clamp(1 - bounce, 0.08, 1)
+	end
+	function Motion.spring(n, preset, onStep, eps)
+		local sp = setmetatable({ n = n, x = table.create(n, 0), v = table.create(n, 0), g = table.create(n, 0), onStep = onStep, eps = eps or 0.001 }, Spring)
+		tune(sp, preset)
+		return sp
+	end
+	function Spring:snap(values)
+		for i = 1, self.n do self.x[i], self.g[i], self.v[i] = values[i], values[i], 0 end
+		awake[self] = nil
+		if self.onStep then self.onStep(self.x) end
+	end
+	function Spring:to(values, preset)
+		if preset then tune(self, preset) end
+		for i = 1, self.n do self.g[i] = values[i] end
+		awake[self] = true
+	end
+	function Spring:moving() return awake[self] == true end
+
+	local function stepSpring(sp, dt)
+		local w0, zeta, eps = sp.w0, sp.zeta, sp.eps
+		local x, v, g = sp.x, sp.v, sp.g
+		local rest = true
+		if zeta < 0.999 then
+			local wd = w0 * math.sqrt(1 - zeta * zeta)
+			local decay = math.exp(-zeta * w0 * dt)
+			local c, s = math.cos(wd * dt), math.sin(wd * dt)
+			for i = 1, sp.n do
+				local a = x[i] - g[i]
+				local b = (v[i] + zeta * w0 * a) / wd
+				local y = decay * (a * c + b * s)
+				local nv = decay * ((b * wd - a * zeta * w0) * c - (a * wd + b * zeta * w0) * s)
+				x[i], v[i] = g[i] + y, nv
+				local tol = type(eps) == "table" and eps[i] or eps
+				if rest and (math.abs(y) > tol or math.abs(nv) > tol * 20) then rest = false end
+			end
+		else
+			local decay = math.exp(-w0 * dt)
+			for i = 1, sp.n do
+				local a = x[i] - g[i]
+				local k = v[i] + w0 * a
+				local y = decay * (a + k * dt)
+				local nv = decay * (v[i] - k * w0 * dt)
+				x[i], v[i] = g[i] + y, nv
+				local tol = type(eps) == "table" and eps[i] or eps
+				if rest and (math.abs(y) > tol or math.abs(nv) > tol * 20) then rest = false end
+			end
+		end
+		if rest then
+			for i = 1, sp.n do x[i], v[i] = g[i], 0 end
+			awake[sp] = nil
+		end
+		if sp.onStep then sp.onStep(x) end
+		if rest and sp.onRest then
+			local done = sp.onRest
+			sp.onRest = nil
+			done()
+		end
+	end
+
+	local UNIT, PX = 0.0008, 0.08
+	local packers = {
+		number = { 1, function(v) return { v } end, function(x) return x[1] end, UNIT },
+		UDim2 = { 4, function(v) return { v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset } end, function(x) return UDim2.new(x[1], x[2], x[3], x[4]) end, { UNIT, PX, UNIT, PX } },
+		UDim = { 2, function(v) return { v.Scale, v.Offset } end, function(x) return UDim.new(x[1], x[2]) end, { UNIT, PX } },
+		Vector2 = { 2, function(v) return { v.X, v.Y } end, function(x) return Vector2.new(x[1], x[2]) end, UNIT },
+		Color3 = { 3, function(v) return { v.R, v.G, v.B } end, function(x) return Color3.new(util.clamp01(x[1]), util.clamp01(x[2]), util.clamp01(x[3])) end, 0.002 },
+	}
+	-- a bouncy spring overshoots; these properties must stay inside 0..1
+	local unitProps = { BackgroundTransparency = true, TextTransparency = true, ImageTransparency = true, Transparency = true,
+		GroupTransparency = true, TextStrokeTransparency = true, ScrollBarImageTransparency = true }
+	local bound = setmetatable({}, { __mode = "k" })
+
+	-- Spring instance[property] toward target. One spring per (instance, property), re-aimed in flight.
+	function Motion.to(instance, property, target, preset, done)
+		local packer = packers[typeof(target)]
+		if not packer then instance[property] = target; if done then done() end; return nil end
+		local map = bound[instance]
+		if not map then map = {}; bound[instance] = map end
+		local sp = map[property]
+		if not sp then
+			local unpack, clampUnit = packer[3], unitProps[property]
+			sp = Motion.spring(packer[1], preset, function(x)
+				local value = unpack(x)
+				if clampUnit then value = util.clamp01(value) end
+				instance[property] = value
+			end, packer[4])
+			local current = packer[2](instance[property])
+			for i = 1, sp.n do sp.x[i], sp.g[i] = current[i], current[i] end
+			map[property] = sp
+		end
+		sp.onRest = done
+		sp:to(packer[2](target), preset)
+		return sp
+	end
+	function Motion.snap(instance, property, value)
+		local map = bound[instance]
+		local sp = map and map[property]
+		local packer = packers[typeof(value)]
+		if sp and packer then
+			sp.onRest = nil
+			sp:snap(packer[2](value))
+		else
+			instance[property] = value
+		end
+	end
+
+	local ease = {}
+	function ease.linear(t) return t end
+	function ease.outCubic(t) return 1 - (1 - t) ^ 3 end
+	function ease.outQuint(t) return 1 - (1 - t) ^ 5 end
+	function ease.outExpo(t) return t >= 1 and 1 or 1 - 2 ^ (-10 * t) end
+	Motion.ease = ease
+
+	function Motion.tween(duration, curve, step, done)
+		local tw = { t = 0, duration = math.max(duration / Motion.speed, 0.001), curve = curve or ease.outCubic, step = step, done = done }
+		if Motion.reduced then tw.duration *= 0.5 end
+		tweens[#tweens + 1] = tw
+		function tw.cancel() tw.dead = true end
+		step(tw.curve(0))
+		return tw
+	end
+	-- fn(elapsed) every frame, or at `hz` with the time since it last ran
+	function Motion.every(fn, hz, scope)
+		local job = { fn = fn, interval = hz and 1 / hz or 0, acc = 0, scope = scope or "job" }
+		jobs[#jobs + 1] = job
+		function job.cancel() job.dead = true end
+		return job
+	end
+
+	local function frame(dt)
+		if not H.alive then return end
+		dt = math.min(dt, 0.1)
+		Motion.dt = dt
+		local n = 0
+		for sp in pairs(awake) do n += 1; stepping[n] = sp end
+		for i = 1, n do
+			local sp = stepping[i]
+			stepping[i] = nil
+			if awake[sp] then
+				local ok, err = pcall(stepSpring, sp, dt)
+				if not ok then awake[sp] = nil; H.fault("spring", err) end
+			end
+		end
+		for i = #tweens, 1, -1 do
+			local tw = tweens[i]
+			if tw.dead then
+				table.remove(tweens, i)
+			else
+				tw.t += dt
+				local p = util.clamp01(tw.t / tw.duration)
+				local ok, err = pcall(tw.step, tw.curve(p))
+				if not ok then tw.dead = true; H.fault("tween", err) end
+				if p >= 1 and not tw.dead then
+					tw.dead = true
+					table.remove(tweens, i)
+					if tw.done then H.try("tween.done", tw.done) end
+				end
+			end
+		end
+		local count = #jobs
+		for i = 1, count do
+			local job = jobs[i]
+			if job and not job.dead then
+				local elapsed, run = dt, true
+				if job.interval > 0 then
+					job.acc += dt
+					if job.acc < job.interval then run = false else elapsed = math.min(job.acc, 0.5); job.acc = 0 end
+				end
+				if run then
+					local ok, err = pcall(job.fn, elapsed)
+					if not ok then job.dead = true; H.fault(job.scope, err) end
+				end
+			end
+		end
+		for i = #jobs, 1, -1 do
+			if jobs[i].dead then table.remove(jobs, i) end
+		end
+	end
+	H.own(S.RunService.RenderStepped:Connect(frame))
+end
+
+-- =====================================================================================
+-- 02 theme  (surfaces are the scheme's ink at low alpha over glass; tokens are bound live)
+-- =====================================================================================
+do
+	local util = H.util
+	local hex = util.hex
+	local Theme = { changed = H.Signal.new() }
+	H.Theme = Theme
+	local T = {}
+	H.T = T
+	Theme.schemes = {
+		dark = { label = "Graphite", base = hex("0C0D12"), ink = hex("F2F3F7"), sub = hex("A4A7B3"), faint = hex("666A78"), fill = { 0.05, 0.08, 0.12 }, stroke = { 0.09, 0.17 }, dark = true },
+		midnight = { label = "Midnight", base = hex("000000"), ink = hex("F2F3F7"), sub = hex("9A9DAA"), faint = hex("5E6270"), fill = { 0.06, 0.095, 0.135 }, stroke = { 0.10, 0.18 }, dark = true },
+		light = { label = "Porcelain", base = hex("F3F2EE"), ink = hex("14151A"), sub = hex("585A66"), faint = hex("8E909C"), fill = { 0.05, 0.08, 0.12 }, stroke = { 0.10, 0.18 }, dark = false },
+	}
+	Theme.schemeOrder = { "dark", "midnight", "light" }
+	Theme.accents = {
+		{ "Violet", hex("8F7CFF") }, { "Azure", hex("4DA3FF") }, { "Mint", hex("45DDA8") }, { "Ember", hex("FF7A45") },
+		{ "Rose", hex("FF5C93") }, { "Gold", hex("F2C14E") }, { "Crimson", hex("FF4B4B") }, { "Bone", hex("EDEBE4") },
+	}
+	Theme.state = { scheme = "dark", accent = Theme.accents[1][2], glass = 0.65, radius = 1 }
+
+	local function resolve()
+		local st = Theme.state
+		local sc = Theme.schemes[st.scheme] or Theme.schemes.dark
+		local glass = util.clamp01(st.glass)
+		T.dark = sc.dark
+		T.base, T.ink, T.sub, T.faint = sc.base, sc.ink, sc.sub, sc.faint
+		T.baseA = 1 - util.lerp(0.84, 0.975, glass)
+		T.fill1A, T.fill2A, T.fill3A = 1 - sc.fill[1], 1 - sc.fill[2], 1 - sc.fill[3]
+		T.strokeA = 1 - sc.stroke[1]
+		T.accent = st.accent
+		T.accentInk = util.luma(st.accent) > 0.62 and hex("101014") or hex("FFFFFF")
+		T.ok, T.warn, T.bad = hex("52D6A0"), hex("F4B45F"), hex("FF6577")
+		T.white, T.black = Color3.new(1, 1, 1), Color3.new(0, 0, 0)
+		T.popover = sc.base:Lerp(sc.ink, sc.dark and 0.08 or 0)
+		local r = st.radius
+		T.rWindow, T.rPanel, T.rCard, T.rControl, T.rSmall = math.floor(24 * r), math.floor(18 * r), math.floor(14 * r), math.floor(10 * r), math.floor(7 * r)
+	end
+	resolve()
+
+	-- strong references on purpose; destroyed instances are swept out
+	local bindings, boundAt = {}, {}
+	function Theme.bind(instance, property, key, map)
+		local list = bindings[instance]
+		if not list then list = {}; bindings[instance] = list; boundAt[instance] = os.clock() end
+		list[property] = { key, map }
+		local value = T[key]
+		if map then value = map(value, T) end
+		instance[property] = value
+		return instance
+	end
+	function Theme.unbind(instance, property)
+		local list = bindings[instance]
+		if list then list[property] = nil end
+	end
+	function Theme.apply()
+		resolve()
+		for instance, list in pairs(bindings) do
+			for property, b in pairs(list) do
+				local value = T[b[1]]
+				if b[2] then value = b[2](value, T) end
+				pcall(function() instance[property] = value end)
+			end
+		end
+		Theme.changed:fire()
+	end
+	function Theme.set(changes)
+		for k, v in pairs(changes) do Theme.state[k] = v end
+		Theme.apply()
+	end
+	-- a few hundred at a time, never the whole table in one frame
+	local sweepFrom
+	H.Motion.every(function()
+		local now = os.clock()
+		local key = sweepFrom
+		if key ~= nil and bindings[key] == nil then key = nil end
+		for _ = 1, 250 do
+			local instance = next(bindings, key)
+			if instance == nil then key = nil; break end
+			if instance.Parent == nil and now - boundAt[instance] > 5 then
+				bindings[instance], boundAt[instance] = nil, nil
+			else
+				key = instance
+			end
+		end
+		sweepFrom = key
+	end, 5, "theme.sweep")
+end
+
+-- =====================================================================================
+-- 03 ui
+-- =====================================================================================
+do
+	local S, util, Motion, Theme, T = H.S, H.util, H.Motion, H.Theme, H.T
+	local UIS = S.UserInputService
+	local UI = { canvas = true }
+	H.UI = UI
+
+	pcall(function()
+		local q = UserSettings():GetService("UserGameSettings").SavedQualityLevel
+		if q ~= Enum.SavedQualitySetting.Automatic and q.Value <= 2 then UI.canvas = false end
+	end)
+
+	local function font(weight, family)
+		local ok, f = pcall(Font.new, family or "rbxasset://fonts/families/GothamSSm.json", weight)
+		if ok and f then return f end
+		return Font.fromEnum(Enum.Font.Gotham)
+	end
+	H.F = {
+		text400 = font(Enum.FontWeight.Regular), text500 = font(Enum.FontWeight.Medium),
+		text600 = font(Enum.FontWeight.SemiBold), text700 = font(Enum.FontWeight.Bold),
+		mono = font(Enum.FontWeight.Regular, "rbxasset://fonts/families/RobotoMono.json"),
+	}
+	-- type ramp: font key, size
+	UI.type = {
+		display = { "text700", 26 }, heading = { "text600", 15 }, label = { "text500", 14 }, body = { "text400", 13 },
+		caption = { "text400", 12 }, eyebrow = { "text700", 10 }, mono = { "mono", 12 }, brand = { "text700", 17 },
+	}
+
+	local function applyTheme(instance, map)
+		for property, spec in pairs(map) do
+			if type(spec) == "table" then Theme.bind(instance, property, spec[1], spec[2]) else Theme.bind(instance, property, spec) end
+		end
+	end
+	function UI.new(class, props)
+		local instance = Instance.new(class)
+		local parent
+		for key, value in pairs(props or {}) do
+			if key == "Parent" then parent = value
+			elseif key == "Theme" then applyTheme(instance, value)
+			else instance[key] = value end
+		end
+		if parent then instance.Parent = parent end
+		return instance
+	end
+	function UI.frame(parent, props)
+		local f = Instance.new("Frame")
+		f.BackgroundTransparency = 1
+		f.BorderSizePixel = 0
+		for key, value in pairs(props or {}) do
+			if key == "Theme" then applyTheme(f, value) else f[key] = value end
+		end
+		f.Parent = parent
+		return f
+	end
+	-- radius: a token name, a pixel count, or true for a full pill
+	function UI.corner(instance, radius)
+		local c = Instance.new("UICorner")
+		if radius == true then c.CornerRadius = UDim.new(1, 0)
+		elseif type(radius) == "string" then Theme.bind(c, "CornerRadius", radius, function(v) return UDim.new(0, v) end)
+		else c.CornerRadius = UDim.new(0, radius or 8) end
+		c.Parent = instance
+		return c
+	end
+	function UI.stroke(instance, token, alphaToken, thickness)
+		local s = Instance.new("UIStroke")
+		s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		s.Thickness = thickness or 1
+		Theme.bind(s, "Color", token or "ink")
+		if type(alphaToken) == "number" then s.Transparency = alphaToken else Theme.bind(s, "Transparency", alphaToken or "strokeA") end
+		pcall(function() s.BorderStrokePosition = Enum.BorderStrokePosition.Inner end)
+		s.Parent = instance
+		return s
+	end
+	function UI.pad(instance, top, right, bottom, left)
+		local p = Instance.new("UIPadding")
+		right = right or top; bottom = bottom or top; left = left or right
+		p.PaddingTop, p.PaddingRight, p.PaddingBottom, p.PaddingLeft = UDim.new(0, top), UDim.new(0, right), UDim.new(0, bottom), UDim.new(0, left)
+		p.Parent = instance
+		return p
+	end
+	function UI.list(instance, direction, gap, align)
+		local l = Instance.new("UIListLayout")
+		l.FillDirection = direction == "x" and Enum.FillDirection.Horizontal or Enum.FillDirection.Vertical
+		l.Padding = UDim.new(0, gap or 0)
+		l.SortOrder = Enum.SortOrder.LayoutOrder
+		if align then
+			if align.h then l.HorizontalAlignment = Enum.HorizontalAlignment[align.h] end
+			if align.v then l.VerticalAlignment = Enum.VerticalAlignment[align.v] end
+		end
+		l.Parent = instance
+		return l
+	end
+	function UI.scaleOf(instance)
+		local s = instance:FindFirstChildOfClass("UIScale")
+		if not s then s = Instance.new("UIScale"); s.Parent = instance end
+		return s
+	end
+	function UI.alphaSeq(...)
+		local points, args = {}, { ... }
+		for i = 1, #args, 2 do points[#points + 1] = NumberSequenceKeypoint.new(args[i], args[i + 1]) end
+		return NumberSequence.new(points)
+	end
+	function UI.gradient(instance, props)
+		local g = Instance.new("UIGradient")
+		for k, v in pairs(props) do g[k] = v end
+		g.Parent = instance
+		return g
+	end
+	function UI.text(parent, text, style, color, props)
+		local spec = UI.type[style or "body"] or UI.type.body
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.BorderSizePixel = 0
+		label.FontFace = H.F[spec[1]]
+		label.TextSize = spec[2]
+		label.Text = text or ""
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.TextYAlignment = Enum.TextYAlignment.Center
+		label.AutomaticSize = Enum.AutomaticSize.XY
+		label.Size = UDim2.new()
+		Theme.bind(label, "TextColor3", color or "ink")
+		for k, v in pairs(props or {}) do label[k] = v end
+		label.Parent = parent
+		return label
+	end
+
+	-- A translucent surface: tinted fill, top sheen and a rim that catches light.
+	-- level: "window" (reads the glass slider), "panel", "popover"
+	function UI.glass(parent, opts)
+		opts = opts or {}
+		local level, radius = opts.level or "panel", opts.radius or "rPanel"
+		local frame = Instance.new("Frame")
+		frame.BorderSizePixel = 0
+		frame.Name = opts.name or "Glass"
+		if level == "window" then
+			Theme.bind(frame, "BackgroundColor3", "base")
+			Theme.bind(frame, "BackgroundTransparency", "baseA")
+		elseif level == "popover" then
+			Theme.bind(frame, "BackgroundColor3", "popover")
+			frame.BackgroundTransparency = 0.03
+		else
+			Theme.bind(frame, "BackgroundColor3", "ink")
+			Theme.bind(frame, "BackgroundTransparency", opts.fill or "fill1A")
+		end
+		UI.corner(frame, radius)
+		local sheen = Instance.new("Frame")
+		sheen.Name = "Sheen"
+		sheen.BorderSizePixel = 0
+		sheen.BackgroundColor3 = Color3.new(1, 1, 1)
+		sheen.Size = UDim2.fromScale(1, 1)
+		sheen.ZIndex = 0
+		sheen.Interactable = false
+		UI.corner(sheen, radius)
+		UI.gradient(sheen, { Rotation = 90, Transparency = UI.alphaSeq(0, opts.sheenAlpha or 0.93, 0.45, 1, 1, 1) })
+		sheen.Parent = frame
+		local rim = Instance.new("UIStroke")
+		rim.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		rim.Thickness = 1
+		rim.Color = Color3.new(1, 1, 1)
+		pcall(function() rim.BorderStrokePosition = Enum.BorderStrokePosition.Inner end)
+		local rimGradient = UI.gradient(rim, { Rotation = 52, Transparency = UI.alphaSeq(0, opts.rimHi or 0.55, 0.32, 0.9, 0.68, 0.93, 1, opts.rimLo or 0.72) })
+		rim.Parent = frame
+		for k, v in pairs(opts.props or {}) do frame[k] = v end
+		frame.Parent = parent
+		return frame, rimGradient
+	end
+	-- a quiet card: ink at low alpha
+	function UI.surface(parent, props, radius, fill)
+		local frame = Instance.new("Frame")
+		frame.BorderSizePixel = 0
+		Theme.bind(frame, "BackgroundColor3", "ink")
+		Theme.bind(frame, "BackgroundTransparency", fill or "fill1A")
+		UI.corner(frame, radius or "rCard")
+		for k, v in pairs(props or {}) do frame[k] = v end
+		frame.Parent = parent
+		return frame
+	end
+	-- a container that fades as one (CanvasGroup), or a plain frame on low graphics
+	function UI.group(parent, props)
+		local g = Instance.new(UI.canvas and "CanvasGroup" or "Frame")
+		g.BackgroundTransparency = 1
+		g.BorderSizePixel = 0
+		for k, v in pairs(props or {}) do g[k] = v end
+		g.Parent = parent
+		return g
+	end
+	function UI.fade(group, alpha, preset, done)
+		if group:IsA("CanvasGroup") then
+			if alpha > 0 then group.Visible = true end
+			Motion.to(group, "GroupTransparency", 1 - alpha, preset or "quick", function()
+				if alpha <= 0 then group.Visible = false end
+				if done then done() end
+			end)
+		else
+			group.Visible = alpha > 0
+			if done then done() end
+		end
+	end
+	function UI.setFade(group, alpha)
+		if group:IsA("CanvasGroup") then Motion.snap(group, "GroupTransparency", 1 - alpha) end
+		group.Visible = alpha > 0
+	end
+
+	-- ------------------------------------------------------------------ input
+	local function isPress(input) return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch end
+	UI.isPress = isPress
+	function UI.point(input) return Vector2.new(input.Position.X, input.Position.Y) end
+	function UI.mouse() return UIS:GetMouseLocation() - S.GuiService:GetGuiInset() end
+	function UI.inside(gui, p)
+		local a, s = gui.AbsolutePosition, gui.AbsoluteSize
+		return p.X >= a.X and p.X <= a.X + s.X and p.Y >= a.Y and p.Y <= a.Y + s.Y
+	end
+	-- hover / press / click / alt (right click) on a GuiButton
+	function UI.wire(button, h)
+		local pressing = false
+		if h.hover then
+			button.MouseEnter:Connect(H.safe("ui.hover", function() h.hover(true) end))
+			button.MouseLeave:Connect(H.safe("ui.hover", function()
+				h.hover(false)
+				if pressing and h.press then pressing = false; h.press(false) end
+			end))
+		end
+		button.InputBegan:Connect(H.safe("ui.press", function(input)
+			if isPress(input) then
+				pressing = true
+				if h.press then h.press(true) end
+			elseif input.UserInputType == Enum.UserInputType.MouseButton2 and h.alt then
+				h.alt(input)
+			end
+		end))
+		button.InputEnded:Connect(H.safe("ui.press", function(input)
+			if isPress(input) and pressing then
+				pressing = false
+				if h.press then h.press(false) end
+			end
+		end))
+		if h.click then button.Activated:Connect(H.safe("ui.click", function(input) h.click(input) end)) end
+		return button
+	end
+	-- invisible hit area over a parent that has no list layout
+	function UI.button(parent, h, props)
+		local b = Instance.new("TextButton")
+		b.Name = "Hit"
+		b.Text = ""
+		b.BackgroundTransparency = 1
+		b.BorderSizePixel = 0
+		b.AutoButtonColor = false
+		b.Size = UDim2.fromScale(1, 1)
+		b.ZIndex = 5
+		for k, v in pairs(props or {}) do b[k] = v end
+		UI.wire(b, h)
+		b.Parent = parent
+		return b
+	end
+	-- a container that is itself the button
+	function UI.pressable(parent, props, h)
+		local b = Instance.new("TextButton")
+		b.Text = ""
+		b.AutoButtonColor = false
+		b.BorderSizePixel = 0
+		b.BackgroundTransparency = 1
+		for k, v in pairs(props or {}) do
+			if k == "Theme" then applyTheme(b, v) else b[k] = v end
+		end
+		if h then UI.wire(b, h) end
+		b.Parent = parent
+		return b
+	end
+	-- drag with mouse or finger; onMove(position, deltaFromStart)
+	function UI.drag(handle, onStart, onMove, onEnd)
+		handle.InputBegan:Connect(H.safe("ui.drag", function(input)
+			if not isPress(input) then return end
+			local start = UI.point(input)
+			if onStart and onStart(start) == false then return end
+			local touch = input.UserInputType == Enum.UserInputType.Touch
+			local moved, ended
+			local function finish()
+				if moved then moved:Disconnect() end
+				if ended then ended:Disconnect() end
+				moved, ended = nil, nil
+				if onEnd then H.try("ui.drag.end", onEnd) end
+			end
+			moved = UIS.InputChanged:Connect(H.safe("ui.drag.move", function(change)
+				if (touch and change == input) or (not touch and change.UserInputType == Enum.UserInputType.MouseMovement) then
+					local p = UI.point(change)
+					onMove(p, p - start)
+				end
+			end))
+			ended = UIS.InputEnded:Connect(function(done)
+				if done == input or (not touch and done.UserInputType == Enum.UserInputType.MouseButton1) then finish() end
+			end)
+		end))
+	end
+
+	-- ------------------------------------------------------------------ popovers
+	local popovers = {}
+	function UI.mountOverlay(parent, sizer)
+		UI.overlay = UI.frame(parent, { Name = "Overlay", Size = UDim2.fromScale(1, 1), ZIndex = 50 })
+		UI.sizer = sizer
+		H.connect(UIS.InputBegan, function(input)
+			if #popovers == 0 then return end
+			if isPress(input) or input.UserInputType == Enum.UserInputType.MouseButton2 then
+				local p = UI.point(input)
+				for i = #popovers, 1, -1 do
+					local pop = popovers[i]
+					if not UI.inside(pop.frame, p) and not (pop.anchor and UI.inside(pop.anchor, p)) then pop.close() else break end
+				end
+			elseif input.KeyCode == Enum.KeyCode.Escape then
+				popovers[#popovers].close()
+			end
+		end, "ui.overlay")
+	end
+	function UI.closePopovers() for i = #popovers, 1, -1 do popovers[i].close(true) end end
+	function UI.popoverOpen() return #popovers > 0 end
+	function UI.popoverFor(anchor)
+		for _, pop in ipairs(popovers) do if pop.anchor == anchor then return pop end end
+		return nil
+	end
+	function UI.topPopover() return popovers[#popovers] end
+
+	-- open a glass panel next to `anchor`; build(content, close) fills it
+	function UI.popover(anchor, opts, build)
+		opts = opts or {}
+		local width = opts.width or 200
+		local pop = { anchor = anchor }
+		local holder = UI.group(UI.overlay, { Name = "Popover", Size = UDim2.fromOffset(width, 0), AutomaticSize = Enum.AutomaticSize.Y, ZIndex = 60 })
+		local glass = UI.glass(holder, { level = "popover", radius = "rCard", rimHi = 0.6, name = "Panel",
+			props = { Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y } })
+		local content = UI.frame(glass, { Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
+		UI.pad(content, opts.pad or 6)
+		UI.list(content, "y", opts.gap or 2)
+		pop.frame = holder
+		local closed = false
+		function pop.close(instant)
+			if closed then return end
+			closed = true
+			local at = table.find(popovers, pop)
+			if at then table.remove(popovers, at) end
+			if instant then holder:Destroy(); return end
+			Motion.to(glass, "Position", UDim2.fromOffset(0, -4), "quick")
+			UI.fade(holder, 0, "quick", function() holder:Destroy() end)
+		end
+		H.try("popover.build", build, content, pop.close)
+		local function place()
+			local scale = UI.sizer and UI.sizer.Scale or 1
+			local o = UI.overlay.AbsolutePosition
+			local a, s = anchor.AbsolutePosition, anchor.AbsoluteSize
+			local ov = UI.overlay.AbsoluteSize / scale
+			local h = math.max(holder.AbsoluteSize.Y / scale, 1)
+			local ax, ay, aw, ah = (a.X - o.X) / scale, (a.Y - o.Y) / scale, s.X / scale, s.Y / scale
+			local x
+			if opts.align == "left" then x = ax elseif opts.align == "center" then x = ax + aw / 2 - width / 2 else x = ax + aw - width end
+			local y = ay + ah + 6
+			if opts.side == "above" or (y + h > ov.Y - 8 and ay - h - 6 > 8) then y = ay - h - 6 end
+			holder.Position = UDim2.fromOffset(math.clamp(x, 8, math.max(8, ov.X - width - 8)), math.clamp(y, 8, math.max(8, ov.Y - h - 8)))
+		end
+		place()
+		holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if not closed then place() end end)
+		UI.setFade(holder, 0)
+		glass.Position = UDim2.fromOffset(0, -6)
+		UI.fade(holder, 1, "quick")
+		Motion.to(glass, "Position", UDim2.new(), "snappy")
+		popovers[#popovers + 1] = pop
+		return pop
+	end
+	-- items = { { label, hint?, danger?, checked?, run } | "divider" }
+	function UI.menu(anchor, items, opts)
+		opts = opts or {}
+		return UI.popover(anchor, { width = opts.width or 200, align = opts.align, side = opts.side }, function(content, close)
+			local rows = 9
+			if #items > rows then
+				local holder = UI.frame(content, { Size = UDim2.new(1, 0, 0, rows * 34 - 2) })
+				local scroller = UI.scroll(holder, { Size = UDim2.fromScale(1, 1) })
+				content = UI.frame(scroller, { Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+				UI.list(content, "y", 2)
+			end
+			for index, item in ipairs(items) do
+				if item == "divider" then
+					UI.frame(content, { Size = UDim2.new(1, -12, 0, 1), LayoutOrder = index, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "strokeA" } })
+				else
+					local row = UI.frame(content, { Size = UDim2.new(1, 0, 0, 32), LayoutOrder = index, Theme = { BackgroundColor3 = "ink" } })
+					UI.corner(row, "rSmall")
+					UI.text(row, tostring(item.label), "label", item.danger and "bad" or "ink", { Position = UDim2.new(0, 12, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 13 })
+					if item.checked then
+						local dot = UI.frame(row, { Size = UDim2.fromOffset(7, 7), Position = UDim2.new(1, -14, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), Theme = { BackgroundColor3 = "accent" }, BackgroundTransparency = 0 })
+						UI.corner(dot, true)
+					elseif item.hint then
+						UI.text(row, item.hint, "mono", "faint", { Position = UDim2.new(1, -12, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), TextSize = 11 })
+					end
+					UI.button(row, {
+						hover = function(on) Motion.to(row, "BackgroundTransparency", on and T.fill2A or 1, "quick") end,
+						click = function()
+							if not item.keepOpen then close() end
+							if item.run then item.run() end
+						end,
+					})
+				end
+			end
+		end)
+	end
+
+	-- ------------------------------------------------------------------ tooltip (one for the whole hub)
+	local tip, tipText, tipToken, tipFor = nil, nil, 0, nil
+	local function tipBuild()
+		if tip and tip.Parent then return true end
+		if not H.alive then return false end
+		local gui = H.screen(9950)
+		tip = UI.group(gui, { Name = "Tip", Size = UDim2.fromOffset(230, 0), AutomaticSize = Enum.AutomaticSize.Y, Visible = false })
+		local back = Instance.new("Frame")
+		back.BackgroundColor3 = Color3.fromRGB(22, 23, 28)
+		back.BorderSizePixel = 0
+		back.Size = UDim2.fromScale(1, 1)
+		back.ZIndex = 0
+		UI.corner(back, 9)
+		local rim = Instance.new("UIStroke")
+		rim.Color, rim.Transparency, rim.Thickness = Color3.new(1, 1, 1), 0.86, 1
+		pcall(function() rim.BorderStrokePosition = Enum.BorderStrokePosition.Inner end)
+		rim.Parent = back
+		back.Parent = tip
+		tipText = Instance.new("TextLabel")
+		tipText.BackgroundTransparency = 1
+		tipText.FontFace = H.F.text400
+		tipText.TextSize = 12
+		tipText.TextColor3 = Color3.fromRGB(226, 227, 234)
+		tipText.TextWrapped = true
+		tipText.TextXAlignment = Enum.TextXAlignment.Left
+		tipText.Size = UDim2.new(1, 0, 0, 0)
+		tipText.AutomaticSize = Enum.AutomaticSize.Y
+		tipText.Parent = tip
+		UI.pad(tipText, 7, 10, 7, 10)
+		return true
+	end
+	local function tipShow(target, text)
+		if not tipBuild() then return end
+		tipText.Text = text
+		local view = H.viewport()
+		local m = UI.mouse()
+		local x = math.clamp(m.X + 14, 8, math.max(8, view.X - 238))
+		local y = math.clamp(m.Y + 18, 8, math.max(8, view.Y - 80))
+		tip.Position = UDim2.fromOffset(x, y)
+		UI.fade(tip, 1, "quick")
+	end
+	function UI.hideTip()
+		tipToken += 1
+		tipFor = nil
+		if tip and tip.Parent then UI.fade(tip, 0, "quick") end
+	end
+	function UI.tooltip(target, text)
+		if type(text) ~= "string" or text == "" then return end
+		target.MouseEnter:Connect(function()
+			tipToken += 1
+			local mine = tipToken
+			tipFor = target
+			task.delay(0.45, function()
+				if mine ~= tipToken or tipFor ~= target or not H.alive or not target.Parent then return end
+				H.try("ui.tip", tipShow, target, text)
+			end)
+		end)
+		target.MouseLeave:Connect(function()
+			if tipFor == target then UI.hideTip() end
+		end)
+		if target:IsA("GuiButton") then target.MouseButton1Down:Connect(UI.hideTip) end
+	end
+
+	-- ------------------------------------------------------------------ scroll (spring-driven wheel)
+	function UI.scroll(parent, props)
+		local sc = Instance.new("ScrollingFrame")
+		sc.BackgroundTransparency = 1
+		sc.BorderSizePixel = 0
+		sc.ScrollBarThickness = 3
+		sc.ScrollBarImageTransparency = 0.75
+		Theme.bind(sc, "ScrollBarImageColor3", "ink")
+		sc.ScrollingDirection = Enum.ScrollingDirection.Y
+		sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		sc.CanvasSize = UDim2.new()
+		sc.ElasticBehavior = Enum.ElasticBehavior.Never
+		sc.ScrollingEnabled = H.touch
+		for k, v in pairs(props or {}) do sc[k] = v end
+		sc.Parent = parent
+		local target = 0
+		local spring = Motion.spring(1, "smooth", function(x) sc.CanvasPosition = Vector2.new(0, x[1]) end, 0.2)
+		local function limit() return math.max(0, sc.AbsoluteCanvasSize.Y - sc.AbsoluteWindowSize.Y) end
+		sc:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+			if target > limit() then target = limit(); spring:to({ target }) end
+		end)
+		sc.InputChanged:Connect(H.safe("ui.wheel", function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseWheel or H.touch then return end
+			local top = UI.topPopover()
+			if top and not sc:IsDescendantOf(top.frame) then return end
+			if not spring:moving() then
+				local y = sc.CanvasPosition.Y
+				spring.x[1], spring.g[1] = y, y
+				target = y
+			end
+			target = math.clamp(target - input.Position.Z * 90, 0, limit())
+			spring:to({ target })
+		end))
+		local api = { frame = sc }
+		function api.to(y, instant)
+			target = math.clamp(y, 0, limit())
+			if instant then spring:snap({ target }) else
+				spring.x[1] = sc.CanvasPosition.Y
+				spring:to({ target })
+			end
+		end
+		return sc, api
+	end
+end
+
+-- =====================================================================================
+-- 04 config  (every setting is a flag; saves are debounced, nothing is written per frame)
+-- =====================================================================================
+do
+	local S, util = H.S, H.util
+	local UIS = S.UserInputService
+	local Config = { values = {}, defaults = {}, listeners = {}, binds = {}, actions = {}, changed = H.Signal.new(), bindsChanged = H.Signal.new() }
+	H.Config = Config
+	local values, defaults, listeners = Config.values, Config.defaults, Config.listeners
+	local stored = { values = {}, binds = {} }
+	local FILE = "config.json"
+
+	local function encode(v)
+		local kind = typeof(v)
+		if kind == "Color3" then return { __c = util.toHex(v) } end
+		if kind == "table" then
+			local out = {}
+			for k, x in pairs(v) do out[k] = encode(x) end
+			return out
+		end
+		return v
+	end
+	local function decode(v)
+		if type(v) ~= "table" then return v end
+		if type(v.__c) == "string" then return util.hex(v.__c) end
+		local out = {}
+		for k, x in pairs(v) do out[k] = decode(x) end
+		return out
+	end
+	local function sameType(a, b) return typeof(a) == typeof(b) end
+	local function isDefault(id)
+		local a, b = values[id], defaults[id]
+		if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+		for k, v in pairs(a) do if b[k] ~= v then return false end end
+		for k, v in pairs(b) do if a[k] ~= v then return false end end
+		return true
+	end
+
+	do -- load what is on disk before anything is defined
+		local saved = H.fs.readJson(FILE)
+		if type(saved) == "table" then
+			if type(saved.values) == "table" then stored.values = saved.values end
+			if type(saved.binds) == "table" then stored.binds = saved.binds end
+		end
+	end
+
+	local pending = false
+	local function flush()
+		pending = false
+		local out = { v = 1, values = {}, binds = {} }
+		for id, raw in pairs(stored.values) do out.values[id] = raw end     -- keep flags this session never defined
+		for id in pairs(values) do
+			if isDefault(id) then out.values[id] = nil else out.values[id] = encode(values[id]) end
+		end
+		for id, b in pairs(Config.binds) do out.binds[id] = { key = b.key, mode = b.mode } end
+		for id, b in pairs(stored.binds) do
+			if out.binds[id] == nil and defaults[id] == nil then out.binds[id] = b end
+		end
+		H.fs.writeJson(FILE, out)
+		stored.values, stored.binds = out.values, out.binds
+	end
+	local later = util.debounce(0.6, function() if pending then H.try("config.save", flush) end end)
+	local function save() pending = true; later() end
+	function Config.flush() if pending then H.try("config.flush", flush) end end
+	H.onUnload:connect(function() Config.flush() end)
+
+	-- register a flag; returns its value (the saved one when there is one)
+	function Config.define(id, default)
+		if defaults[id] ~= nil then return values[id] end
+		defaults[id] = default
+		local saved = decode(stored.values[id])
+		if saved ~= nil and sameType(saved, default) then values[id] = saved else values[id] = util.copy(default) end
+		local sb = stored.binds[id]
+		if sb and type(sb.key) == "string" and not Config.binds[id] then
+			Config.binds[id] = { key = sb.key, mode = sb.mode or "toggle" }
+		end
+		return values[id]
+	end
+	function Config.get(id) return values[id] end
+	function Config.set(id, value, quiet)
+		if defaults[id] == nil then defaults[id] = value end
+		local old = values[id]
+		if old == value and type(value) ~= "table" then return end
+		values[id] = value
+		local list = listeners[id]
+		if list then
+			for _, fn in ipairs(table.clone(list)) do H.try("config." .. id, fn, value, old) end
+		end
+		if not quiet then
+			Config.changed:fire(id, value)
+			save()
+		end
+	end
+	function Config.reset(id) if defaults[id] ~= nil then Config.set(id, util.copy(defaults[id])) end end
+	function Config.resetAll() for id in pairs(defaults) do Config.reset(id) end end
+	function Config.isDefault(id) return isDefault(id) end
+	function Config.on(id, fn, now)
+		local list = listeners[id]
+		if not list then list = {}; listeners[id] = list end
+		list[#list + 1] = fn
+		if now and values[id] ~= nil then H.try("config." .. id, fn, values[id], nil) end
+		return function()
+			local at = table.find(list, fn)
+			if at then table.remove(list, at) end
+		end
+	end
+	-- mirror flags into a plain table that feature loops read for free
+	function Config.mirror(map)
+		local out = {}
+		for key, id in pairs(map) do
+			out[key] = values[id]
+			Config.on(id, function(v) out[key] = v end)
+		end
+		return out
+	end
+
+	-- keys
+	local KEYLABEL = { LeftControl = "Ctrl", RightControl = "RCtrl", LeftShift = "Shift", RightShift = "RShift", LeftAlt = "Alt", RightAlt = "RAlt",
+		Return = "Enter", Backspace = "Bksp", Escape = "Esc", Space = "Space", Delete = "Del", Insert = "Ins", PageUp = "PgUp", PageDown = "PgDn" }
+	function Config.keyLabel(name) if not name or name == "" then return "None" end return KEYLABEL[name] or name end
+	function Config.keyName(input)
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then return input.KeyCode.Name end
+		return nil
+	end
+	function Config.bind(id, key, mode)
+		if key == nil then Config.binds[id] = nil else Config.binds[id] = { key = key, mode = mode or "toggle" } end
+		Config.bindsChanged:fire(id)
+		save()
+	end
+	function Config.bindOf(id) return Config.binds[id] end
+	-- capture the next key press: done(key, cancelled)
+	function Config.capture(done)
+		if Config.capturing then return end
+		Config.capturing = true
+		local conn
+		conn = UIS.InputBegan:Connect(function(input)
+			local key = Config.keyName(input)
+			if not key then return end
+			conn:Disconnect()
+			task.delay(0.15, function() Config.capturing = false end)
+			if key == "Escape" then H.try("capture", done, nil, true)
+			elseif key == "Backspace" or key == "Delete" then H.try("capture", done, nil, false)
+			else H.try("capture", done, key, false) end
+		end)
+		H.own(conn)
+	end
+	-- bound keys: toggles flip (or follow the key in hold mode), buttons run
+	local held = {}
+	H.connect(UIS.InputBegan, function(input)
+		if Config.capturing or UIS:GetFocusedTextBox() then return end
+		local name = Config.keyName(input)
+		if not name then return end
+		for id, b in pairs(Config.binds) do
+			if b.key == name then
+				local action = Config.actions[id]
+				if action then
+					if action.kind == "toggle" and b.mode == "hold" then
+						held[name] = held[name] or {}
+						held[name][id] = true
+						Config.set(id, true)
+					else
+						action.run()
+					end
+				end
+			end
+		end
+	end, "config.keys")
+	H.connect(UIS.InputEnded, function(input)
+		local name = Config.keyName(input)
+		local list = name and held[name]
+		if not list then return end
+		for id in pairs(list) do Config.set(id, false) end
+		held[name] = nil
+	end, "config.keys.up")
+end
+
+-- =====================================================================================
+-- 05 controls  (a control is a row in a card: label on the left, the widget on the right)
+-- =====================================================================================
+do
+	local S, util, Motion, Theme, T, UI, Config = H.S, H.util, H.Motion, H.Theme, H.T, H.UI, H.Config
+	local Controls = { bindables = {} }
+	H.Controls = Controls
+
+	-- never `id and define(...) or default`: a saved `false` would fall through to the default
+	local function initial(id, default)
+		if id then return Config.define(id, default) end
+		return default
+	end
+
+	-- section: { body = Frame, count = number, col = {rows}, index = function }
+	local function makeRow(section, spec, controlWidth)
+		section.count = (section.count or 0) + 1
+		if section.col then section.col.rows += 1 end
+		local row = UI.frame(section.body, { Name = spec.label or "Row", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = section.count })
+		if section.count > 1 then
+			UI.frame(row, { Name = "Rule", Size = UDim2.new(1, -28, 0, 1), Position = UDim2.fromOffset(14, 0), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "strokeA" } })
+		end
+		local wash = UI.frame(row, { Name = "Wash", Size = UDim2.new(1, -8, 1, -6), Position = UDim2.fromOffset(4, 3), Theme = { BackgroundColor3 = "ink" }, BackgroundTransparency = 1, ZIndex = 0 })
+		UI.corner(wash, "rSmall")
+		local left = UI.frame(row, { Name = "Left", Size = UDim2.new(1, -((controlWidth or 120) + 30), 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+		UI.pad(left, 12, 0, 12, 14)
+		UI.list(left, "y", 2)
+		local label = UI.text(left, spec.label or "", "label", "ink", { TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 20), AutomaticSize = Enum.AutomaticSize.None })
+		if spec.desc and spec.desc ~= "" then
+			UI.text(left, spec.desc, "caption", "sub", { TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0), LayoutOrder = 2, LineHeight = 1.15 })
+		end
+		local slot = UI.frame(row, { Name = "Slot", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 0), Size = UDim2.fromOffset(0, 44), AutomaticSize = Enum.AutomaticSize.X, ZIndex = 6 })
+		UI.list(slot, "x", 8, { h = "Right", v = "Center" })
+		local api = { frame = row, left = left, slot = slot, label = label, wash = wash }
+		if spec.tip and spec.tip ~= "" then UI.tooltip(row, spec.tip) end
+		function api.hover(on) Motion.to(wash, "BackgroundTransparency", on and 0.965 or 1, "quick") end
+		function api.flash()
+			wash.BackgroundTransparency = 0.86
+			Theme.unbind(wash, "BackgroundColor3")
+			wash.BackgroundColor3 = T.accent
+			Motion.to(wash, "BackgroundTransparency", 1, "lazy", function() Theme.bind(wash, "BackgroundColor3", "ink") end)
+		end
+		if section.index then section.index({ label = spec.label or "", desc = spec.desc or "", row = api, id = spec.id }) end
+		return api
+	end
+	Controls.row = makeRow
+
+	local function bindChip(slot, id, order)
+		local chip = UI.frame(slot, { Name = "Bind", Size = UDim2.fromOffset(0, 20), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = order or 1, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" }, Visible = false })
+		UI.corner(chip, 6)
+		UI.pad(chip, 0, 6)
+		local text = UI.text(chip, "", "mono", "sub", { TextSize = 11, Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X })
+		local function refresh()
+			local b = Config.bindOf(id)
+			chip.Visible = b ~= nil and b.key ~= nil
+			if b and b.key then text.Text = Config.keyLabel(b.key) .. (b.mode == "hold" and " hold" or "") end
+		end
+		Config.bindsChanged:connect(function(changed) if changed == id and chip.Parent then refresh() end end)
+		refresh()
+	end
+	local function contextMenu(anchor, spec)
+		local items = {}
+		local id = spec.id
+		if id then items[#items + 1] = { label = "Reset to default", run = function() Config.reset(id) end } end
+		if spec.bindable and id then
+			local b = Config.bindOf(id)
+			items[#items + 1] = { label = b and "Change key" or "Bind to a key", run = function()
+				H.Window.toast({ title = "Press a key", text = "Esc cancels, Backspace clears", time = 2.2 })
+				Config.capture(function(key, cancelled)
+					if cancelled then return end
+					Config.bind(id, key)
+					H.Window.toast({ title = key and ("Bound to " .. Config.keyLabel(key)) or "Key cleared", text = spec.label })
+				end)
+			end }
+			if b then
+				if spec.kind == "toggle" then
+					items[#items + 1] = { label = "Hold to activate", checked = b.mode == "hold", run = function() Config.bind(id, b.key, b.mode == "hold" and "toggle" or "hold") end }
+				end
+				items[#items + 1] = { label = "Clear key", run = function() Config.bind(id, nil) end }
+			end
+		end
+		if #items > 0 then UI.menu(anchor, items, { align = "right" }) end
+	end
+
+	-- ------------------------------------------------------------------ toggle
+	function Controls.toggle(section, spec)
+		spec.kind = "toggle"
+		spec.bindable = spec.bindable ~= false
+		local id = spec.id
+		local value = initial(id, spec.default == true)
+		local row = makeRow(section, spec, 70)
+		if id and spec.bindable then
+			bindChip(row.slot, id, 1)
+			Controls.bindables[id] = { label = spec.label or id, kind = "toggle" }
+			Config.actions[id] = { kind = "toggle", run = function() Config.set(id, not (Config.get(id) == true)) end }
+		end
+		local track = UI.frame(row.slot, { Name = "Switch", Size = UDim2.fromOffset(40, 22), LayoutOrder = 3, BackgroundTransparency = 0 })
+		UI.corner(track, true)
+		local knob = UI.frame(track, { Name = "Knob", Size = UDim2.fromOffset(16, 16), Position = UDim2.new(0, 3, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0 })
+		UI.corner(knob, true)
+		local pressed = false
+		local function paint(instant)
+			local on = value
+			local color = on and T.accent or T.ink
+			local alpha = on and 0 or T.fill3A - 0.05
+			local width = pressed and 21 or 16
+			local x = on and (40 - 3 - width) or 3
+			if instant then
+				track.BackgroundColor3, track.BackgroundTransparency = color, alpha
+				Motion.snap(knob, "Position", UDim2.new(0, x, 0.5, 0)); Motion.snap(knob, "Size", UDim2.fromOffset(width, 16))
+			else
+				Motion.to(track, "BackgroundColor3", color, "quick")
+				Motion.to(track, "BackgroundTransparency", alpha, "quick")
+				Motion.to(knob, "Position", UDim2.new(0, x, 0.5, 0), pressed and "quick" or "bouncy")
+				Motion.to(knob, "Size", UDim2.fromOffset(width, 16), "snappy")
+			end
+		end
+		paint(true)
+		Theme.changed:connect(function() if track.Parent then paint(true) end end)
+		local api = { row = row, id = id }
+		function api.get() return value end
+		local function now() if id then return Config.get(id) == true end return value end
+		function api.set(nextValue, quiet)
+			nextValue = nextValue == true
+			if id then
+				if Config.get(id) == nextValue then
+					if value ~= nextValue then value = nextValue; paint() end
+					return
+				end
+				Config.set(id, nextValue, quiet)
+			else
+				if nextValue == value then return end
+				value = nextValue
+				paint()
+				if spec.changed then H.try("toggle", spec.changed, value) end
+			end
+		end
+		if id then
+			Config.on(id, function(v)
+				value = v == true
+				if track.Parent then paint() end
+				if spec.changed then spec.changed(value) end
+			end)
+			if spec.changed and value then task.defer(H.safe("toggle.init", function() spec.changed(value) end)) end
+		end
+		UI.button(row.frame, {
+			hover = row.hover,
+			press = function(on) pressed = on; paint() end,
+			click = function() api.set(not now()) end,
+			alt = function() contextMenu(track, spec) end,
+		})
+		return api
+	end
+
+	-- ------------------------------------------------------------------ slider
+	function Controls.slider(section, spec)
+		local id = spec.id
+		local min, max, step = spec.min or 0, spec.max or 100, spec.step or 1
+		local decimals = spec.decimals
+		if not decimals then
+			decimals = 4
+			for places = 0, 4 do
+				local scaled = step * 10 ^ places
+				if math.abs(scaled - math.floor(scaled + 0.5)) < 1e-6 then decimals = places; break end
+			end
+		end
+		local value = initial(id, spec.default or min)
+		local row = makeRow(section, spec, 70)
+		row.frame.Name = "Slider"
+		local suffix = spec.suffix or ""
+		local function text(v) return util.format(v, decimals) .. suffix end
+		local field = UI.new("TextBox", { Name = "Value", Size = UDim2.fromOffset(70, 24), BackgroundTransparency = 1, Text = text(value), FontFace = H.F.mono,
+			TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right, ClearTextOnFocus = true, LayoutOrder = 2, Theme = { TextColor3 = "sub" }, PlaceholderText = "", Parent = row.slot })
+		-- room under the label for the track; the track itself spans the row
+		UI.frame(row.left, { Name = "Spacer", Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 5 })
+		local bar = UI.frame(row.frame, { Name = "Bar", Size = UDim2.new(1, -28, 0, 20), Position = UDim2.new(0, 14, 1, -30) })
+		local track = UI.frame(bar, { Name = "Track", Size = UDim2.new(1, 0, 0, 4), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill3A" } })
+		UI.corner(track, true)
+		local fill = UI.frame(track, { Name = "Fill", Size = UDim2.fromScale(0, 1), Theme = { BackgroundColor3 = "accent" }, BackgroundTransparency = 0 })
+		UI.corner(fill, true)
+		local knob = UI.frame(track, { Name = "Knob", Size = UDim2.fromOffset(14, 14), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0, ZIndex = 3 })
+		UI.corner(knob, true)
+		local dragging = false
+		local function place(instant)
+			local alpha = util.clamp01((value - min) / math.max(max - min, 1e-9))
+			if instant then
+				Motion.snap(fill, "Size", UDim2.fromScale(alpha, 1)); Motion.snap(knob, "Position", UDim2.fromScale(alpha, 0.5))
+			else
+				Motion.to(fill, "Size", UDim2.fromScale(alpha, 1), "quick"); Motion.to(knob, "Position", UDim2.fromScale(alpha, 0.5), "quick")
+			end
+			if not field:IsFocused() then field.Text = text(value) end
+		end
+		place(true)
+		local api = { row = row, id = id }
+		function api.get() return value end
+		function api.set(nextValue, quiet)
+			nextValue = math.clamp(util.round(nextValue, step), min, max)
+			if decimals > 0 then nextValue = tonumber(string.format("%." .. decimals .. "f", nextValue)) or nextValue end
+			if nextValue == value then return end
+			if id then Config.set(id, nextValue, quiet) else
+				value = nextValue
+				place()
+				if spec.changed then H.try("slider", spec.changed, value) end
+			end
+		end
+		if id then
+			Config.on(id, function(v)
+				value = v
+				if track.Parent then place(dragging) end
+				if spec.changed then spec.changed(value) end
+			end)
+			if spec.changed then task.defer(H.safe("slider.init", function() spec.changed(value) end)) end
+		end
+		local hit = UI.new("TextButton", { Name = "Hit", Text = "", BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.new(1, 14, 1, 0), Position = UDim2.fromOffset(-7, 0), ZIndex = 6, Parent = bar })
+		local function at(p)
+			local w = math.max(1, track.AbsoluteSize.X)
+			api.set(min + util.clamp01((p.X - track.AbsolutePosition.X) / w) * (max - min))
+		end
+		UI.drag(hit, function(p)
+			dragging = true
+			Motion.to(knob, "Size", UDim2.fromOffset(20, 16), "snappy")
+			at(p)
+		end, function(p) at(p) end, function()
+			dragging = false
+			Motion.to(knob, "Size", UDim2.fromOffset(14, 14), "bouncy")
+		end)
+		hit.MouseEnter:Connect(function() if not dragging then Motion.to(knob, "Size", UDim2.fromOffset(16, 16), "quick") end; row.hover(true) end)
+		hit.MouseLeave:Connect(function() if not dragging then Motion.to(knob, "Size", UDim2.fromOffset(14, 14), "quick") end; row.hover(false) end)
+		hit.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton2 then contextMenu(knob, spec) end end)
+		field.FocusLost:Connect(H.safe("slider.field", function()
+			local typed = tonumber((string.gsub(field.Text, "[^%d%.%-]", "")))
+			if typed then api.set(typed) end
+			field.Text = text(value)
+			Theme.bind(field, "TextColor3", "sub")
+		end))
+		field.Focused:Connect(function() Theme.bind(field, "TextColor3", "ink") end)
+		return api
+	end
+
+	-- ------------------------------------------------------------------ dropdown
+	local function optionList(options)
+		local out = {}
+		for _, o in ipairs(options) do
+			if type(o) == "table" then out[#out + 1] = { value = o.value or o[1], label = o.label or o[2] or tostring(o.value or o[1]) }
+			else out[#out + 1] = { value = o, label = tostring(o) } end
+		end
+		return out
+	end
+	function Controls.dropdown(section, spec)
+		local id = spec.id
+		local options = optionList(spec.options or {})
+		local default = spec.default
+		if default == nil and options[1] then default = options[1].value end
+		local value = initial(id, default)
+		local row = makeRow(section, spec, 150)
+		local button = UI.pressable(row.slot, { Name = "Select", Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 3, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" } })
+		UI.corner(button, "rSmall")
+		UI.pad(button, 0, 9, 0, 11)
+		UI.list(button, "x", 6, { v = "Center" })
+		local label = UI.text(button, "", "label", "ink", { TextSize = 13, LayoutOrder = 1, TextTruncate = Enum.TextTruncate.AtEnd })
+		local limit = Instance.new("UISizeConstraint"); limit.MaxSize = Vector2.new(140, 28); limit.Parent = label
+		local chevron = UI.text(button, "\u{203A}", "label", "faint", { LayoutOrder = 2, TextSize = 16, Rotation = 90 })
+		local function labelOf(v)
+			for _, o in ipairs(options) do if o.value == v then return o.label end end
+			return tostring(v)
+		end
+		label.Text = labelOf(value)
+		local api = { row = row, id = id }
+		function api.get() return value end
+		function api.set(nextValue, quiet)
+			if nextValue == value then return end
+			if id then Config.set(id, nextValue, quiet) else
+				value = nextValue
+				label.Text = labelOf(value)
+				if spec.changed then H.try("dropdown", spec.changed, value) end
+			end
+		end
+		function api.options(list) options = optionList(list); label.Text = labelOf(value) end
+		if id then
+			Config.on(id, function(v)
+				value = v
+				if label.Parent then label.Text = labelOf(value) end
+				if spec.changed then spec.changed(value) end
+			end)
+			if spec.changed then task.defer(H.safe("dropdown.init", function() spec.changed(value) end)) end
+		end
+		UI.wire(button, {
+			hover = function(on) Motion.to(button, "BackgroundTransparency", on and T.fill3A or T.fill2A, "quick"); row.hover(on) end,
+			click = function()
+				local existing = UI.popoverFor(button)
+				if existing then existing.close(); return end
+				local items = {}
+				for _, o in ipairs(options) do
+					items[#items + 1] = { label = o.label, checked = o.value == value, run = function() api.set(o.value) end }
+				end
+				UI.menu(button, items, { align = "right", width = spec.menuWidth })
+			end,
+			alt = function() contextMenu(button, spec) end,
+		})
+		return api
+	end
+
+	-- ------------------------------------------------------------------ segmented (a pill that slides like liquid)
+	function Controls.segmentedBar(parent, options, startValue, onPick, props)
+		options = optionList(options)
+		local bar = UI.frame(parent, { Name = "Segmented", Size = UDim2.new(1, 0, 0, 30), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" } })
+		UI.corner(bar, "rSmall")
+		for k, v in pairs(props or {}) do bar[k] = v end
+		local count = #options
+		local thumb = UI.frame(bar, { Name = "Thumb", Size = UDim2.new(1 / count, -4, 1, -4), Position = UDim2.new(0, 2, 0, 2), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill3A" } })
+		UI.corner(thumb, "rSmall")
+		local labels, current = {}, nil
+		-- the two edges are separate springs: the leading edge arrives first
+		local edges = Motion.spring(2, "snappy", function(x)
+			local a, b = math.min(x[1], x[2]), math.max(x[1], x[2])
+			thumb.Position = UDim2.new(a, 2, 0, 2)
+			thumb.Size = UDim2.new(b - a, -4, 1, -4)
+		end, 0.0004)
+		local function select(index, instant)
+			local previous = current
+			current = index
+			for i, l in ipairs(labels) do Theme.bind(l, "TextColor3", i == index and "ink" or "sub") end
+			local a, b = (index - 1) / count, index / count
+			if instant or not previous then edges:snap({ a, b }); return end
+			if index > previous then
+				edges:to({ edges.g[1], b }, "snappy")
+				task.delay(0.045, function() edges:to({ a, b }, "liquid") end)
+			else
+				edges:to({ a, edges.g[2] }, "snappy")
+				task.delay(0.045, function() edges:to({ a, b }, "liquid") end)
+			end
+		end
+		for index, option in ipairs(options) do
+			local cell = UI.frame(bar, { Size = UDim2.new(1 / count, 0, 1, 0), Position = UDim2.fromScale((index - 1) / count, 0), ZIndex = 2 })
+			labels[index] = UI.text(cell, option.label, "label", "sub", { TextSize = 12.5, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+			UI.button(cell, { click = function()
+				if current == index then return end
+				select(index)
+				onPick(option.value, index)
+			end })
+		end
+		local startIndex = 1
+		for index, option in ipairs(options) do if option.value == startValue then startIndex = index end end
+		select(startIndex, true)
+		return bar, function(v) for index, option in ipairs(options) do if option.value == v then select(index) end end end
+	end
+	function Controls.segmented(section, spec)
+		local id = spec.id
+		local options = optionList(spec.options)
+		local value = initial(id, spec.default ~= nil and spec.default or options[1].value)
+		local width = spec.width or math.min(70 * #options, 240)
+		local row = makeRow(section, spec, width)
+		local holder = UI.frame(row.slot, { Size = UDim2.fromOffset(width, 30), LayoutOrder = 3 })
+		local api = { row = row, id = id }
+		local _, show = Controls.segmentedBar(holder, options, value, function(v)
+			if id then Config.set(id, v) else value = v; if spec.changed then H.try("segmented", spec.changed, v) end end
+		end)
+		function api.get() return value end
+		if id then
+			Config.on(id, function(v)
+				value = v
+				if holder.Parent then show(v) end
+				if spec.changed then spec.changed(v) end
+			end)
+			if spec.changed then task.defer(H.safe("segmented.init", function() spec.changed(value) end)) end
+		end
+		return api
+	end
+
+	-- ------------------------------------------------------------------ button / keybind / input / swatches / note / stat
+	function Controls.pillButton(parent, text, style, run, props)
+		local primary, danger = style == "primary", style == "danger"
+		local button = UI.pressable(parent, { Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 3,
+			Theme = { BackgroundColor3 = primary and "accent" or (danger and "bad" or "ink"), BackgroundTransparency = (primary or danger) and nil or "fill2A" } })
+		if primary or danger then button.BackgroundTransparency = danger and 0.82 or 0 end
+		UI.corner(button, "rSmall")
+		UI.pad(button, 0, 12)
+		local label = UI.text(button, text, "label", primary and "accentInk" or (danger and "bad" or "ink"), { TextSize = 13, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), AutomaticSize = Enum.AutomaticSize.XY })
+		local scale = UI.scaleOf(button)
+		UI.wire(button, {
+			hover = function(on)
+				if primary then Motion.to(button, "BackgroundTransparency", on and 0.12 or 0, "quick")
+				elseif danger then Motion.to(button, "BackgroundTransparency", on and 0.7 or 0.82, "quick")
+				else Motion.to(button, "BackgroundTransparency", on and T.fill3A or T.fill2A, "quick") end
+			end,
+			press = function(on) Motion.to(scale, "Scale", on and 0.96 or 1, on and "quick" or "bouncy") end,
+			click = function() H.try("button", run) end,
+		})
+		return button, label
+	end
+	function Controls.button(section, spec)
+		local row = makeRow(section, spec, spec.width or 110)
+		local button, label = Controls.pillButton(row.slot, spec.text or "Run", spec.style, spec.run)
+		if spec.id and spec.bindable then
+			spec.kind = "button"
+			bindChip(row.slot, spec.id, 1)
+			Controls.bindables[spec.id] = { label = spec.label or spec.id, kind = "button" }
+			Config.actions[spec.id] = { kind = "button", run = function() H.try("button", spec.run) end }
+			Config.define(spec.id, false)
+		end
+		local api = { row = row, button = button }
+		function api.setText(t) label.Text = t end
+		return api
+	end
+	function Controls.keybind(section, spec)
+		local id = spec.id
+		local value = initial(id, spec.default or "")
+		local row = makeRow(section, spec, 100)
+		local button = UI.pressable(row.slot, { Size = UDim2.fromOffset(0, 28), AutomaticSize = Enum.AutomaticSize.X, LayoutOrder = 3, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" } })
+		UI.corner(button, "rSmall")
+		UI.pad(button, 0, 12)
+		local label = UI.text(button, Config.keyLabel(value), "mono", "ink", { TextSize = 12, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+		local function refresh() label.Text = Config.keyLabel(value) end
+		if id then Config.on(id, function(v) value = v; if label.Parent then refresh() end end) end
+		UI.wire(button, {
+			hover = function(on) Motion.to(button, "BackgroundTransparency", on and T.fill3A or T.fill2A, "quick"); row.hover(on) end,
+			click = function()
+				label.Text = "press a key"
+				Config.capture(function(key, cancelled)
+					if cancelled then refresh(); return end
+					if id then Config.set(id, key or "") else value = key or ""; refresh() end
+				end)
+			end,
+		})
+		return { row = row }
+	end
+	function Controls.input(section, spec)
+		local id = spec.id
+		local value = initial(id, spec.default or "")
+		local row = makeRow(section, spec, spec.width or 150)
+		local holder = UI.frame(row.slot, { Size = UDim2.fromOffset(spec.width or 150, 28), LayoutOrder = 3, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" } })
+		UI.corner(holder, "rSmall")
+		local box = UI.new("TextBox", { BackgroundTransparency = 1, Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), Text = tostring(value), PlaceholderText = spec.placeholder or "",
+			FontFace = H.F.text400, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ClipsDescendants = true, Theme = { TextColor3 = "ink", PlaceholderColor3 = "faint" }, Parent = holder })
+		local api = { row = row, box = box }
+		function api.get() return box.Text end
+		box.FocusLost:Connect(H.safe("input", function(enter)
+			if id then Config.set(id, box.Text) end
+			if spec.changed then spec.changed(box.Text, enter) end
+		end))
+		return api
+	end
+	-- a row of colour dots; stores a Color3
+	function Controls.swatches(section, spec)
+		local id = spec.id
+		local colors = spec.colors
+		local value = initial(id, spec.default or colors[1][2])
+		local row = makeRow(section, spec, #colors * 24 + 8)
+		local holder = UI.frame(row.slot, { Size = UDim2.fromOffset(#colors * 24, 28), LayoutOrder = 3 })
+		UI.list(holder, "x", 4, { v = "Center" })
+		local dots = {}
+		local function same(a, b) return math.abs(a.R - b.R) + math.abs(a.G - b.G) + math.abs(a.B - b.B) < 0.01 end
+		local function paint()
+			for i, d in ipairs(dots) do
+				Motion.to(d.ring, "Transparency", same(colors[i][2], value) and 0 or 1, "quick")
+			end
+		end
+		for i, c in ipairs(colors) do
+			local dot = UI.pressable(holder, { Size = UDim2.fromOffset(20, 20), LayoutOrder = i, BackgroundColor3 = c[2], BackgroundTransparency = 0 })
+			UI.corner(dot, true)
+			local ring = Instance.new("UIStroke")
+			ring.Color, ring.Thickness, ring.Transparency = Color3.new(1, 1, 1), 2, 1
+			ring.Parent = dot
+			dots[i] = { ring = ring }
+			UI.tooltip(dot, c[1])
+			UI.wire(dot, { click = function()
+				if id then Config.set(id, c[2]) else value = c[2]; paint(); if spec.changed then H.try("swatches", spec.changed, value) end end
+			end })
+		end
+		if id then Config.on(id, function(v) value = v; if holder.Parent then paint() end; if spec.changed then spec.changed(v) end end) end
+		paint()
+		return { row = row }
+	end
+	function Controls.note(section, spec)
+		section.count = (section.count or 0) + 1
+		local frame = UI.frame(section.body, { Name = "Note", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = section.count })
+		UI.pad(frame, 8, 14, 10, 14)
+		UI.text(frame, spec.text or "", "caption", spec.tone or "sub", { TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0), LineHeight = 1.2 })
+		return frame
+	end
+	-- a read-only value that refreshes while its tab is showing
+	function Controls.stat(section, spec)
+		local row = makeRow(section, spec, spec.width or 110)
+		local text = UI.text(row.slot, "", "mono", "sub", { LayoutOrder = 3, TextSize = 12 })
+		local function refresh() text.Text = tostring(spec.get()) end
+		refresh()
+		Motion.every(function()
+			if text.Parent and H.Window.showing(spec.page or "") then refresh() end
+		end, spec.hz or 2, "stat")
+		return { row = row, refresh = refresh }
+	end
+end
+
+-- =====================================================================================
+-- 06 window
+-- =====================================================================================
+do
+	local S, util, Motion, Theme, T, UI, Config, Controls = H.S, H.util, H.Motion, H.Theme, H.T, H.UI, H.Config, H.Controls
+	local UIS = S.UserInputService
+	local Window = { open = false, built = false, pages = {}, order = {}, index = {}, scale = 1, onShow = H.Signal.new(), onPage = H.Signal.new() }
+	H.Window = Window
+	local W, HGT = 880, 560
+	local SIDE, HEADER = 196, 78
+	local CONTENT_X = SIDE + 18
+	local CONTENT_W = W - CONTENT_X - 12
+
+	-- ------------------------------------------------------------------ toasts
+	local toasts = {}
+	local function layoutToasts()
+		local y = 0
+		for _, t in ipairs(toasts) do
+			Motion.to(t.holder, "Position", UDim2.new(1, -18, 0, 18 + y), "smooth")
+			y += t.height + 10
+		end
+	end
+	-- opts: title, text, tone ("accent" | "ok" | "warn" | "bad"), time
+	function Window.toast(opts)
+		if not Window.hud then return end
+		local tone = opts.tone or "accent"
+		local hasText = opts.text ~= nil and opts.text ~= ""
+		local toast = { height = hasText and 58 or 42 }
+		local holder = UI.frame(Window.hud, { Name = "Toast", AnchorPoint = Vector2.new(1, 0), Size = UDim2.fromOffset(300, toast.height), Position = UDim2.new(1, 340, 0, 18) })
+		local sizer = Instance.new("UIScale"); sizer.Scale = Window.scale; sizer.Parent = holder
+		local glass = UI.glass(holder, { level = "popover", radius = "rCard", props = { Size = UDim2.fromScale(1, 1) } })
+		local chip = UI.frame(glass, { Size = UDim2.fromOffset(6, 6), Position = UDim2.new(0, 16, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), Theme = { BackgroundColor3 = tone }, BackgroundTransparency = 0 })
+		UI.corner(chip, true)
+		UI.text(glass, opts.title or "", "heading", "ink", { TextSize = 13.5, Position = UDim2.fromOffset(32, hasText and 10 or 12), Size = UDim2.new(1, -46, 0, 18), AutomaticSize = Enum.AutomaticSize.None, TextTruncate = Enum.TextTruncate.AtEnd })
+		if hasText then
+			UI.text(glass, opts.text, "caption", "sub", { Position = UDim2.fromOffset(32, 29), Size = UDim2.new(1, -46, 0, 18), AutomaticSize = Enum.AutomaticSize.None, TextTruncate = Enum.TextTruncate.AtEnd })
+		end
+		local timer = UI.frame(glass, { Size = UDim2.new(1, -28, 0, 2), Position = UDim2.new(0, 14, 1, -5), Theme = { BackgroundColor3 = tone }, BackgroundTransparency = 0.5 })
+		UI.corner(timer, true)
+		toast.holder = holder
+		table.insert(toasts, 1, toast)
+		while #toasts > 4 do
+			local old = table.remove(toasts)
+			old.gone = true
+			old.holder:Destroy()
+		end
+		layoutToasts()
+		local life = opts.time or 3.4
+		local tw = Motion.tween(life, Motion.ease.linear, function(p) timer.Size = UDim2.new(1 - p, -28 * (1 - p), 0, 2) end)
+		local function dismiss()
+			if toast.gone then return end
+			toast.gone = true
+			tw.cancel()
+			local at = table.find(toasts, toast)
+			if at then table.remove(toasts, at) end
+			Motion.to(holder, "Position", UDim2.new(1, 360, 0, holder.Position.Y.Offset), "smooth", function() holder:Destroy() end)
+			layoutToasts()
+		end
+		task.delay(life, function() if H.alive then dismiss() end end)
+		UI.button(glass, { click = dismiss })
+		return dismiss
+	end
+	-- ------------------------------------------------------------------ pages
+	local SectionApi = {}
+	SectionApi.__index = SectionApi
+	for _, kind in ipairs({ "toggle", "slider", "dropdown", "segmented", "button", "keybind", "input", "swatches", "note", "stat" }) do
+		SectionApi[kind] = function(self, spec)
+			if kind == "stat" then spec.page = spec.page or self.raw.page.id end
+			return Controls[kind](self.raw, spec)
+		end
+	end
+	function Window.sectionApi(raw) return setmetatable({ raw = raw, body = raw.body }, SectionApi) end
+
+	local Page = {}
+	Page.__index = Page
+	local function band(page, full)
+		page.bandCount += 1
+		local frame = UI.frame(page.content, { Name = full and "Full" or "Columns", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = page.bandCount })
+		if full then
+			UI.list(frame, "y", 12)
+			return { full = true, frame = frame }
+		end
+		local columns = {}
+		for i = 1, 2 do
+			local c = UI.frame(frame, { Name = "Column" .. i, Size = UDim2.new(0.5, -6, 0, 0), Position = UDim2.new(i == 1 and 0 or 0.5, i == 1 and 0 or 6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+			UI.list(c, "y", 12)
+			columns[i] = { frame = c, rows = 0 }
+		end
+		return { full = false, frame = frame, columns = columns }
+	end
+	-- spec: title, desc, full (span both columns)
+	function Page:section(spec)
+		spec = spec or {}
+		if self.slicing then task.wait() end
+		local current = self.band
+		if spec.full then
+			current = band(self, true)
+			self.band = nil
+		elseif not current or current.full then
+			current = band(self, false)
+			self.band = current
+		end
+		local host, col
+		if current.full then host = current.frame else
+			col = current.columns[1].rows <= current.columns[2].rows and current.columns[1] or current.columns[2]
+			col.rows += 2
+			host = col.frame
+		end
+		self.sectionCount += 1
+		local card = UI.surface(host, { Name = spec.title or "Card", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = self.sectionCount })
+		UI.stroke(card, "ink", "strokeA")
+		local stack = UI.frame(card, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+		UI.list(stack, "y", 0)
+		UI.pad(stack, 0, 0, 4, 0)
+		if spec.title then
+			local head = UI.frame(stack, { Name = "Head", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 0 })
+			UI.pad(head, 14, 14, 8, 14)
+			UI.list(head, "y", 3)
+			local dot = UI.frame(head, { Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 1 })
+			UI.list(dot, "x", 8, { v = "Center" })
+			local mark = UI.frame(dot, { Size = UDim2.fromOffset(4, 14), LayoutOrder = 1, Theme = { BackgroundColor3 = "accent" }, BackgroundTransparency = 0 })
+			UI.corner(mark, true)
+			UI.text(dot, spec.title, "heading", "ink", { LayoutOrder = 2 })
+			if spec.desc then
+				UI.text(head, spec.desc, "caption", "sub", { TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0), LayoutOrder = 2, LineHeight = 1.15 })
+			end
+		end
+		local body = UI.frame(stack, { Name = "Body", Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1 })
+		UI.list(body, "y", 0)
+		local page = self
+		local raw = { body = body, count = spec.title and 1 or 0, page = self, card = card, col = col }
+		function raw.index(entry)
+			entry.page, entry.section = page, spec.title or page.title
+			Window.index[#Window.index + 1] = entry
+		end
+		return Window.sectionApi(raw)
+	end
+	-- a full-width block the caller draws itself
+	function Page:custom(height, build)
+		if self.slicing then task.wait() end
+		local current = band(self, true)
+		self.band = nil
+		local frame = UI.frame(current.frame, { Name = "Custom", Size = UDim2.new(1, 0, 0, height or 0) })
+		if not height then frame.AutomaticSize = Enum.AutomaticSize.Y end
+		H.try("page.custom", build, frame)
+		return frame
+	end
+
+	-- spec: id, title, group, eyebrow, order, build(page)
+	function Window.page(spec)
+		local page = setmetatable({ id = spec.id, title = spec.title, group = spec.group or "", eyebrow = spec.eyebrow, build = spec.build, built = false,
+			bandCount = 0, sectionCount = 0, order = spec.order or (#Window.order + 1) * 10 }, Page)
+		Window.pages[spec.id] = page
+		Window.order[#Window.order + 1] = page
+		table.sort(Window.order, function(a, b) return a.order < b.order end)
+		if Window.built then Window.rebuildNav() end
+		return page
+	end
+	local function ensureBuilt(page, background)
+		if page.built then return end
+		page.built = true
+		page.slicing = background == true
+		local holder = UI.group(Window.pageHost, { Name = page.id, Size = UDim2.fromScale(1, 1), Visible = false })
+		local scroller, api = UI.scroll(holder, { Size = UDim2.fromScale(1, 1), Name = "Scroll" })
+		local content = UI.frame(scroller, { Name = "Content", Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y })
+		UI.list(content, "y", 12)
+		UI.pad(content, 2, 0, 18, 0)
+		page.holder, page.frame, page.scroll, page.content = holder, scroller, api, content
+		if page.build then H.try("page." .. page.id, page.build, page) end
+		page.slicing = false
+		page.ready = true
+	end
+	Window.ensureBuilt = ensureBuilt
+	-- build every tab quietly, a card per frame, so the first visit never stutters and search finds everything
+	function Window.prebuild()
+		if Window.prebuilding then return end
+		Window.prebuilding = true
+		for _, page in ipairs(table.clone(Window.order)) do
+			if not H.alive then return end
+			if Window.pages[page.id] == page and not page.built then
+				H.try("page.prebuild", ensureBuilt, page, true)
+				task.wait(0.05)
+			end
+		end
+		Window.prebuilding = false
+	end
+
+	function Window.go(id, instant)
+		local page = Window.pages[id]
+		if not page or not Window.built then return end
+		local previous = Window.current
+		if previous == page then return end
+		ensureBuilt(page)
+		Window.current = page
+		UI.closePopovers()
+		UI.hideTip()
+		if previous and previous.holder then
+			UI.fade(previous.holder, 0, "quick")
+			Motion.to(previous.holder, "Position", UDim2.fromOffset(0, -8), "quick")
+		end
+		page.holder.Visible = true
+		if instant then
+			UI.setFade(page.holder, 1)
+			page.holder.Position = UDim2.new()
+		else
+			UI.setFade(page.holder, 0)
+			Motion.snap(page.holder, "Position", UDim2.fromOffset(0, 14))
+			UI.fade(page.holder, 1, "smooth")
+			Motion.to(page.holder, "Position", UDim2.new(), "smooth")
+		end
+		Window.setTitle(page, instant)
+		Window.selectNav(page, instant)
+		Window.onPage:fire(page)
+	end
+	function Window.showing(id) return Window.open and Window.current ~= nil and Window.current.id == id end
+
+	-- ------------------------------------------------------------------ shell
+	local navItems = {}
+	function Window.build()
+		if Window.built then return end
+		Window.built = true
+		local gui = H.screen(9000)
+		local hudGui = H.screen(9100)
+		Window.gui = gui
+		Window.hud = UI.frame(hudGui, { Name = "Hud", Size = UDim2.fromScale(1, 1) })
+		-- frees the cursor in first person while the hub is open
+		Window.modal = UI.new("TextButton", { Name = "Modal", Text = "", BackgroundTransparency = 1, Size = UDim2.fromOffset(0, 0), Modal = true, Visible = false, Parent = gui })
+		local stage = UI.frame(gui, { Name = "Stage", Size = UDim2.fromScale(1, 1) })
+		local holder = UI.frame(stage, { Name = "Window", Size = UDim2.fromOffset(W, HGT), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Visible = false })
+		local sizer = Instance.new("UIScale")
+		sizer.Parent = holder
+		Window.holder, Window.sizer = holder, sizer
+		local root = UI.group(holder, { Name = "Root", Size = UDim2.fromScale(1, 1) })
+		UI.corner(root, "rWindow")
+		Window.root = root
+		local glass, rim = UI.glass(root, { level = "window", radius = "rWindow", name = "Glass", props = { Size = UDim2.fromScale(1, 1), Active = true }, rimHi = 0.42, rimLo = 0.7, sheenAlpha = 0.95 })
+		Window.glass = glass
+
+		-- sidebar
+		local side = UI.glass(glass, { level = "panel", radius = "rPanel", name = "Sidebar", fill = "fill1A", props = { Size = UDim2.new(0, SIDE, 1, -20), Position = UDim2.fromOffset(10, 10) }, rimHi = 0.72, rimLo = 0.9 })
+		local brand = UI.frame(side, { Name = "Brand", Size = UDim2.new(1, 0, 0, 50) })
+		local mark = UI.frame(brand, { Size = UDim2.fromOffset(0, 26), Position = UDim2.fromOffset(18, 16), AutomaticSize = Enum.AutomaticSize.X })
+		UI.list(mark, "x", 4, { v = "Bottom" })
+		UI.text(mark, "OMNI", "brand", "ink", { LayoutOrder = 1 })
+		UI.text(mark, "hub", "display", "accent", { LayoutOrder = 2, TextSize = 20 })
+		local navHost = UI.scroll(side, { Name = "Nav", Size = UDim2.new(1, -16, 1, -118), Position = UDim2.fromOffset(8, 52), AutomaticCanvasSize = Enum.AutomaticSize.None, ClipsDescendants = true })
+		Window.navHost = navHost
+		Window.navPill = UI.frame(navHost, { Name = "Pill", Size = UDim2.new(1, 0, 0, 34), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" }, Visible = false })
+		UI.corner(Window.navPill, "rControl")
+		UI.stroke(Window.navPill, "ink", "strokeA")
+		-- user chip
+		local user = UI.frame(side, { Name = "User", Size = UDim2.new(1, -16, 0, 50), Position = UDim2.new(0, 8, 1, -58), Theme = { BackgroundColor3 = "ink" }, BackgroundTransparency = 1 })
+		UI.corner(user, "rControl")
+		local avatar = UI.new("ImageLabel", { Name = "Avatar", Size = UDim2.fromOffset(32, 32), Position = UDim2.new(0, 9, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundTransparency = 0.9, Theme = { BackgroundColor3 = "ink" },
+			Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(H.LP.UserId) .. "&w=150&h=150", Parent = user })
+		UI.corner(avatar, true)
+		UI.text(user, H.LP.DisplayName, "label", "ink", { Position = UDim2.fromOffset(50, 9), Size = UDim2.new(1, -62, 0, 17), AutomaticSize = Enum.AutomaticSize.None, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 13 })
+		UI.text(user, "@" .. H.LP.Name, "caption", "faint", { Position = UDim2.fromOffset(50, 26), Size = UDim2.new(1, -62, 0, 15), AutomaticSize = Enum.AutomaticSize.None, TextTruncate = Enum.TextTruncate.AtEnd, TextSize = 11 })
+		UI.button(user, {
+			hover = function(on) Motion.to(user, "BackgroundTransparency", on and T.fill2A or 1, "quick") end,
+			click = function()
+				UI.menu(user, {
+					{ label = "Settings", run = function() Window.go("settings") end },
+					{ label = "Search", hint = "Ctrl K", run = function() Window.palette() end },
+					"divider",
+					{ label = "Hide hub", hint = Config.keyLabel(Config.get("app.key.menu")), run = function() Window.show(false) end },
+					{ label = "Unload OmniHub", danger = true, run = function() H.unload() end },
+				}, { side = "above", align = "left", width = 200 })
+			end,
+		})
+
+		-- header
+		local header = UI.frame(glass, { Name = "Header", Size = UDim2.new(0, CONTENT_W, 0, HEADER), Position = UDim2.fromOffset(CONTENT_X, 6) })
+		Window.eyebrow = UI.text(header, "", "eyebrow", "faint", { Position = UDim2.fromOffset(2, 13) })
+		Window.titleClip = UI.frame(header, { Name = "TitleClip", Size = UDim2.new(1, -250, 0, 46), Position = UDim2.fromOffset(0, 27), ClipsDescendants = true })
+		local search = UI.frame(header, { Name = "Search", Size = UDim2.fromOffset(160, 32), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -78, 0, 22), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill1A" } })
+		UI.corner(search, true)
+		UI.stroke(search, "ink", "strokeA")
+		UI.text(search, "Search", "body", "faint", { Position = UDim2.new(0, 14, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5) })
+		local hint = UI.frame(search, { Size = UDim2.fromOffset(0, 18), AutomaticSize = Enum.AutomaticSize.X, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill2A" } })
+		UI.corner(hint, 6); UI.pad(hint, 0, 6)
+		UI.text(hint, "Ctrl K", "mono", "faint", { TextSize = 10.5, Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X })
+		UI.button(search, {
+			hover = function(on) Motion.to(search, "BackgroundTransparency", on and T.fill2A or T.fill1A, "quick") end,
+			click = function() Window.palette() end,
+		})
+		local function roundButton(glyph, x, tone, run, tip)
+			local button = UI.frame(header, { Size = UDim2.fromOffset(30, 30), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, x, 0, 23), Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "fill1A" } })
+			UI.corner(button, true)
+			local g = UI.text(button, glyph, "label", "sub", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), TextSize = 16 })
+			local scale = UI.scaleOf(button)
+			local hit = UI.button(button, {
+				hover = function(on)
+					Motion.to(button, "BackgroundTransparency", on and (tone and 0.8 or T.fill3A) or T.fill1A, "quick")
+					Theme.bind(button, "BackgroundColor3", on and tone or "ink")
+					Theme.bind(g, "TextColor3", on and (tone or "ink") or "sub")
+				end,
+				press = function(on) Motion.to(scale, "Scale", on and 0.9 or 1, on and "quick" or "bouncy") end,
+				click = run,
+			})
+			UI.tooltip(hit, tip)
+		end
+		roundButton("\u{00D7}", -4, "bad", function() Window.show(false) end, "Hide (" .. Config.keyLabel(Config.get("app.key.menu")) .. ")")
+		roundButton("-", -40, nil, function() Window.show(false) end, "Minimise to the island")
+
+		-- pages
+		Window.pageHost = UI.frame(glass, { Name = "Pages", Size = UDim2.new(0, CONTENT_W, 1, -(HEADER + 16)), Position = UDim2.fromOffset(CONTENT_X, HEADER + 6), ClipsDescendants = true })
+		local edge = UI.frame(glass, { Name = "EdgeTop", Size = UDim2.new(0, CONTENT_W, 0, 14), Position = UDim2.fromOffset(CONTENT_X, HEADER + 6), ZIndex = 7, Theme = { BackgroundColor3 = "base" }, BackgroundTransparency = 0, Interactable = false })
+		UI.gradient(edge, { Rotation = 90, Transparency = UI.alphaSeq(0, 0.25, 1, 1) })
+		UI.mountOverlay(holder, sizer)
+
+		-- drag (header and brand), spring-followed
+		local position = Motion.spring(2, "snappy", function(x) holder.Position = UDim2.fromOffset(x[1], x[2]) end, 0.2)
+		Window.position = position
+		local function clampTo(x, y)
+			local view = H.viewport()
+			local hw, hh = W * sizer.Scale / 2, HGT * sizer.Scale / 2
+			return math.clamp(x, 140 - hw, view.X + hw - 140), math.clamp(y, hh * 0.25, view.Y + hh - 80)
+		end
+		Window.clampTo = clampTo
+		local startX, startY
+		local function dragFrom(handle)
+			UI.drag(handle, function()
+				UI.closePopovers()
+				startX, startY = position.g[1], position.g[2]
+			end, function(_, delta)
+				local x, y = clampTo(startX + delta.X, startY + delta.Y)
+				position:to({ x, y }, "quick")
+			end, function()
+				local view = H.viewport()
+				Config.set("app.window.x", position.g[1] / view.X)
+				Config.set("app.window.y", position.g[2] / view.Y)
+			end)
+		end
+		dragFrom(UI.new("TextButton", { Name = "Grip", Text = "", BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.new(1, -250, 1, 0), ZIndex = 2, Parent = header }))
+		dragFrom(UI.new("TextButton", { Name = "Grip", Text = "", BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.fromScale(1, 1), ZIndex = 2, Parent = brand }))
+
+		-- the rim highlight leans toward the pointer; written in whole degrees only
+		local rimShown
+		local rimAngle = Motion.spring(1, "gentle", function(x)
+			local angle = math.floor(x[1] + 0.5)
+			if angle ~= rimShown then rimShown = angle; rim.Rotation = angle end
+		end, 0.05)
+		rimAngle:snap({ 52 })
+		Motion.every(function()
+			if not Window.open then return end
+			local m = UI.mouse()
+			local p, s = holder.AbsolutePosition, holder.AbsoluteSize
+			local angle = math.deg(math.atan2(m.Y - (p.Y + s.Y / 2), m.X - (p.X + s.X / 2))) + 180
+			local current = rimAngle.g[1]
+			local diff = (angle - current + 180) % 360 - 180
+			if math.abs(diff) > 1.5 then rimAngle:to({ current + diff }) end
+		end, 30, "window.rim")
+
+		Window.rebuildNav()
+		Window.rescale()
+		H.connect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), function() Window.rescale() end, "window.viewport")
+	end
+	function Window.rescale()
+		if not Window.built then return end
+		local view = H.viewport()
+		local auto = math.clamp(math.min(view.Y / 1000, view.X / 1400), 0.55, 1.5)
+		local user = (Config.get("app.scale") or 100) / 100
+		local scale = math.min(auto * user, (view.X - 24) / W, (view.Y - 24) / HGT)
+		Window.scale = scale
+		Motion.to(Window.sizer, "Scale", scale * (Window.open and 1 or 0.95), "smooth")
+		local x, y = Window.clampTo((Config.get("app.window.x") or 0.5) * view.X, (Config.get("app.window.y") or 0.5) * view.Y)
+		Window.position:snap({ x, y })
+	end
+
+	-- ------------------------------------------------------------------ nav (the pill's two edges are springs)
+	local selected = Motion.spring(2, "snappy", function(x)
+		local pill = Window.navPill
+		if not pill then return end
+		local a, b = math.min(x[1], x[2]), math.max(x[1], x[2])
+		pill.Position = UDim2.fromOffset(0, a)
+		pill.Size = UDim2.new(1, 0, 0, math.max(8, b - a))
+	end, 0.15)
+	function Window.rebuildNav()
+		local host = Window.navHost
+		for _, item in ipairs(navItems) do item.frame:Destroy() end
+		for _, child in ipairs(host:GetChildren()) do if child.Name == "Group" then child:Destroy() end end
+		table.clear(navItems)
+		local y, lastGroup = 0, nil
+		for _, page in ipairs(Window.order) do
+			if not page.hidden then
+				if page.group ~= lastGroup then
+					lastGroup = page.group
+					if page.group ~= "" then
+						y += 10
+						UI.text(host, string.upper(page.group), "eyebrow", "faint", { Name = "Group", Position = UDim2.fromOffset(12, y), TextSize = 9, Size = UDim2.new(1, -24, 0, 12), AutomaticSize = Enum.AutomaticSize.None, TextTruncate = Enum.TextTruncate.AtEnd })
+						y += 22
+					end
+				end
+				local item = UI.frame(host, { Name = "Item", Size = UDim2.new(1, 0, 0, 34), Position = UDim2.fromOffset(0, y), Theme = { BackgroundColor3 = "ink" }, ZIndex = 2 })
+				UI.corner(item, "rControl")
+				local dot = UI.frame(item, { Size = UDim2.fromOffset(6, 6), Position = UDim2.new(0, 14, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), Theme = { BackgroundColor3 = "sub" }, BackgroundTransparency = 0.4 })
+				UI.corner(dot, true)
+				local label = UI.text(item, page.title, "label", "sub", { Position = UDim2.new(0, 32, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 13.5 })
+				navItems[#navItems + 1] = { frame = item, dot = dot, label = label, page = page, y = y }
+				UI.button(item, {
+					hover = function(on) if Window.current ~= page then Motion.to(item, "BackgroundTransparency", on and 0.955 or 1, "quick") end end,
+					click = function() Window.go(page.id) end,
+				})
+				y += 36
+			end
+		end
+		host.CanvasSize = UDim2.fromOffset(0, y + 6)
+		if Window.current then Window.selectNav(Window.current, true) end
+	end
+	function Window.selectNav(page, instant)
+		local target
+		for _, entry in ipairs(navItems) do
+			local on = entry.page == page
+			Theme.bind(entry.dot, "BackgroundColor3", on and "accent" or "sub")
+			Theme.bind(entry.label, "TextColor3", on and "ink" or "sub")
+			Motion.to(entry.frame, "BackgroundTransparency", 1, "quick")
+			if on then target = entry end
+		end
+		if not target then Window.navPill.Visible = false; return end
+		local a, b = target.y, target.y + 34
+		if instant or not Window.navPill.Visible then
+			Window.navPill.Visible = true
+			selected:snap({ a, b })
+			return
+		end
+		-- liquid: the edge facing the destination moves first, the other follows
+		if a > selected.g[1] then selected:to({ selected.g[1], b }, "snappy") else selected:to({ a, selected.g[2] }, "snappy") end
+		task.delay(0.05, function() if Window.current == page then selected:to({ a, b }, "liquid") end end)
+	end
+	-- the old title slides up out of a mask, the new one rises into it
+	function Window.setTitle(page, instant)
+		local clip, old = Window.titleClip, Window.titleLabel
+		local label = UI.text(clip, page.title, "display", "ink", { Position = UDim2.fromOffset(0, instant and 2 or 46), Name = "Title" })
+		Window.titleLabel = label
+		Window.eyebrow.Text = string.upper(page.eyebrow or (page.group ~= "" and page.group or "OmniHub"))
+		if instant then if old then old:Destroy() end return end
+		Motion.to(label, "Position", UDim2.fromOffset(0, 2), "smooth")
+		if old then Motion.to(old, "Position", UDim2.fromOffset(0, -46), "smooth", function() old:Destroy() end) end
+	end
+
+	-- ------------------------------------------------------------------ show / hide
+	function Window.show(on, instant)
+		if not Window.built or Window.open == on then return end
+		Window.open = on
+		UI.closePopovers()
+		UI.hideTip()
+		local holder, root, sizer = Window.holder, Window.root, Window.sizer
+		Window.modal.Visible = on and Config.get("app.freeCursor") ~= false
+		if on then
+			holder.Visible = true
+			if not Window.current and Window.order[1] then Window.go(Window.startPage or Window.order[1].id, true) end
+			if instant then
+				UI.setFade(root, 1); Motion.snap(sizer, "Scale", Window.scale)
+			else
+				UI.setFade(root, 0)
+				Motion.snap(sizer, "Scale", Window.scale * 0.94)
+				UI.fade(root, 1, "smooth")
+				Motion.to(sizer, "Scale", Window.scale, "bouncy")
+			end
+		else
+			Motion.to(sizer, "Scale", Window.scale * 0.96, "quick")
+			UI.fade(root, 0, "quick", function() if not Window.open then holder.Visible = false end end)
+			if not root:IsA("CanvasGroup") then holder.Visible = false end
+		end
+		Window.onShow:fire(on)
+	end
+	function Window.toggle() Window.show(not Window.open) end
+
+	-- ------------------------------------------------------------------ command palette (Ctrl K)
+	local palette
+	function Window.palette()
+		if palette then palette.close(); return end
+		if not Window.built then return end
+		if not Window.open then Window.show(true) end
+		for _, page in ipairs(Window.order) do ensureBuilt(page) end
+		local scale = UI.sizer.Scale
+		local veil = UI.new("TextButton", { Name = "Veil", Text = "", AutoButtonColor = false, Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, ZIndex = 70, Parent = UI.overlay })
+		Motion.to(veil, "BackgroundTransparency", 0.62, "smooth")
+		local holder = UI.frame(veil, { Name = "Palette", Size = UDim2.fromOffset(520, 0), AutomaticSize = Enum.AutomaticSize.Y, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 70), ZIndex = 71 })
+		local psizer = Instance.new("UIScale"); psizer.Scale = 0.95; psizer.Parent = holder
+		Motion.to(psizer, "Scale", 1, "bouncy")
+		local glass = UI.glass(holder, { level = "popover", radius = "rPanel", props = { Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y } })
+		local stack = UI.frame(glass, { Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y })
+		UI.list(stack, "y", 0)
+		local top = UI.frame(stack, { Size = UDim2.new(1, 0, 0, 52), LayoutOrder = 1 })
+		local box = UI.new("TextBox", { BackgroundTransparency = 1, Size = UDim2.new(1, -90, 1, 0), Position = UDim2.fromOffset(20, 0), Text = "", PlaceholderText = "Search every setting",
+			FontFace = H.F.text500, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, Theme = { TextColor3 = "ink", PlaceholderColor3 = "faint" }, Parent = top })
+		UI.text(top, "esc", "mono", "faint", { Position = UDim2.new(1, -18, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), TextSize = 11 })
+		UI.frame(stack, { Size = UDim2.new(1, 0, 0, 1), LayoutOrder = 2, Theme = { BackgroundColor3 = "ink", BackgroundTransparency = "strokeA" } })
+		local list = UI.frame(stack, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 3 })
+		UI.pad(list, 6)
+		UI.list(list, "y", 2)
+		local rows, results, cursor, conn = {}, {}, 1, nil
+		local api = {}
+		function api.close()
+			if not palette then return end
+			palette = nil
+			if conn then conn:Disconnect() end
+			Motion.to(veil, "BackgroundTransparency", 1, "quick", function() veil:Destroy() end)
+			holder:Destroy()
+		end
+		local function highlight()
+			for index, row in ipairs(rows) do Motion.to(row, "BackgroundTransparency", index == cursor and T.fill2A or 1, "quick") end
+		end
+		local function run(result)
+			if not result then return end
+			api.close()
+			Window.go(result.page.id)
+			if result.kind == "page" then return end
+			task.delay(0.12, function()
+				local entry = result.entry
+				if not entry.row.frame.Parent then return end
+				local sc = result.page.frame
+				local offset = (entry.row.frame.AbsolutePosition.Y - sc.AbsolutePosition.Y + sc.CanvasPosition.Y) - 90 * Window.scale
+				result.page.scroll.to(offset)
+				entry.row.flash()
+			end)
+		end
+		local function refresh()
+			for _, row in ipairs(rows) do row:Destroy() end
+			table.clear(rows); table.clear(results)
+			local query = box.Text
+			local scored = {}
+			for _, page in ipairs(Window.order) do
+				local score = util.fuzzy(query, page.title)
+				if score then scored[#scored + 1] = { kind = "page", page = page, label = page.title, sub = "Tab", score = score + 1.5 } end
+			end
+			for _, entry in ipairs(Window.index) do
+				local score = util.fuzzy(query, entry.label)
+				if not score and query ~= "" and entry.desc ~= "" then
+					local other = util.fuzzy(query, entry.desc)
+					score = other and other - 4 or nil
+				end
+				if score then scored[#scored + 1] = { kind = "control", page = entry.page, entry = entry, label = entry.label, sub = entry.page.title .. "  >  " .. tostring(entry.section), score = score } end
+			end
+			table.sort(scored, function(a, b) return a.score > b.score end)
+			for index = 1, math.min(8, #scored) do
+				local result = scored[index]
+				results[index] = result
+				local row = UI.frame(list, { Size = UDim2.new(1, 0, 0, 38), LayoutOrder = index, Theme = { BackgroundColor3 = "ink" } })
+				UI.corner(row, "rSmall")
+				UI.text(row, result.label, "label", "ink", { Position = UDim2.new(0, 14, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 13.5 })
+				UI.text(row, result.sub, "caption", "faint", { Position = UDim2.new(1, -12, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), TextSize = 11.5 })
+				UI.button(row, { hover = function(on) if on then cursor = index; highlight() end end, click = function() run(result) end })
+				rows[index] = row
+			end
+			if #scored == 0 then
+				local row = UI.frame(list, { Size = UDim2.new(1, 0, 0, 52) })
+				UI.text(row, "Nothing matches", "body", "faint", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+				rows[1] = row
+			end
+			cursor = 1
+			highlight()
+		end
+		box:GetPropertyChangedSignal("Text"):Connect(H.safe("palette", refresh))
+		conn = UIS.InputBegan:Connect(H.safe("palette.key", function(input)
+			if input.KeyCode == Enum.KeyCode.Down then cursor = math.min(#results, cursor + 1); highlight()
+			elseif input.KeyCode == Enum.KeyCode.Up then cursor = math.max(1, cursor - 1); highlight()
+			elseif input.KeyCode == Enum.KeyCode.Return or input.KeyCode == Enum.KeyCode.KeypadEnter then run(results[cursor])
+			elseif input.KeyCode == Enum.KeyCode.Escape then api.close() end
+		end))
+		veil.Activated:Connect(function() api.close() end)
+		palette = api
+		refresh()
+		box:CaptureFocus()
+	end
+
+	-- ------------------------------------------------------------------ island: what is left on screen while the hub is hidden
+	function Window.island()
+		if Window.islandFrame then return end
+		local holder = UI.frame(Window.hud, { Name = "Island", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(0, 32), AutomaticSize = Enum.AutomaticSize.X, Visible = false })
+		local sizer = Instance.new("UIScale"); sizer.Scale = Window.scale; sizer.Parent = holder
+		local glass = UI.glass(holder, { level = "popover", radius = 16, props = { Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X } })
+		local body = UI.pressable(glass, { Name = "Body", Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X })
+		UI.pad(body, 0, 14, 0, 14)
+		UI.list(body, "x", 9, { v = "Center" })
+		UI.text(body, "OMNI", "brand", "ink", { TextSize = 11, LayoutOrder = 1 })
+		local dot = UI.frame(body, { Size = UDim2.fromOffset(4, 4), LayoutOrder = 2, Theme = { BackgroundColor3 = "accent" }, BackgroundTransparency = 0 })
+		UI.corner(dot, true)
+		local stats = UI.text(body, "", "mono", "sub", { TextSize = 11, LayoutOrder = 3 })
+		local key = UI.text(body, "", "mono", "faint", { TextSize = 11, LayoutOrder = 4 })
+		Window.islandFrame = holder
+		local shown = false
+		local function show(on)
+			on = on and Config.get("app.island") ~= false
+			if on == shown then return end
+			shown = on
+			if on then
+				holder.Visible = true
+				holder.Position = UDim2.new(0.5, 0, 0, -44)
+				Motion.to(holder, "Position", UDim2.new(0.5, 0, 0, 12), "bouncy")
+			else
+				Motion.to(holder, "Position", UDim2.new(0.5, 0, 0, -48), "quick", function() if not shown then holder.Visible = false end end)
+			end
+		end
+		UI.wire(body, { hover = function(on) Motion.to(sizer, "Scale", Window.scale * (on and 1.05 or 1), "snappy") end, click = function() Window.show(true) end })
+		Window.onShow:connect(function(open) show(not open) end)
+		Config.on("app.island", function() show(not Window.open) end)
+		local frames, last = 0, os.clock()
+		Motion.every(function()
+			if not shown then return end
+			frames += 1
+			local now = os.clock()
+			if now - last >= 0.5 then
+				local fps = frames / (now - last)
+				frames, last = 0, now
+				local ping = 0
+				pcall(function() ping = H.LP:GetNetworkPing() * 1000 end)
+				stats.Text = string.format("%d fps  %d ms", math.floor(fps + 0.5), math.floor(ping + 0.5))
+				key.Text = Config.keyLabel(Config.get("app.key.menu"))
+			end
+		end, nil, "island")
+		show(not Window.open)
+	end
+end
+
+-- =====================================================================================
+-- 07 features  (public Roblox APIs only; every loop is gated by a flag and restores what it changed)
+-- =====================================================================================
+local F = {}
+H.F_ = F
+do
+	local S, util, Motion, Config = H.S, H.util, H.Motion, H.Config
+	local Players, RunService, UIS, Lighting = S.Players, S.RunService, S.UserInputService, S.Lighting
+	local LP = H.LP
+	local hum, root, cam = H.humanoid, H.root, H.camera
+
+	local function defineAll(map) for id, default in pairs(map) do Config.define(id, default) end end
+	local function weak() return setmetatable({}, { __mode = "k" }) end
+	local function typing() return UIS:GetFocusedTextBox() ~= nil end
+	local function isEnemy(plr)
+		if plr == LP then return false end
+		return not (plr.Team ~= nil and LP.Team ~= nil and plr.Team == LP.Team)
+	end
+	local function alive(plr)
+		local h = hum(plr)
+		return h ~= nil and h.Health > 0 and root(plr) ~= nil
+	end
+	F.isEnemy, F.alive = isEnemy, alive
+
+	defineAll({
+		-- movement
+		["move.speed.on"] = false, ["move.speed.mode"] = "WalkSpeed", ["move.speed.value"] = 40,
+		["move.jump.on"] = false, ["move.jump.value"] = 90, ["move.infjump"] = false, ["move.bhop"] = false,
+		["move.fly.on"] = false, ["move.fly.speed"] = 70, ["move.noclip"] = false, ["move.clicktp"] = false,
+		["move.gravity.on"] = false, ["move.gravity.value"] = 196,
+		-- aim
+		["aim.on"] = false, ["aim.mode"] = "Hold right mouse", ["aim.fov"] = 160, ["aim.smooth"] = 35, ["aim.part"] = "Head",
+		["aim.team"] = true, ["aim.wall"] = true, ["aim.dist"] = 1500, ["aim.ring"] = true,
+		["trig.on"] = false, ["trig.delay"] = 60,
+		-- visuals
+		["esp.on"] = false, ["esp.boxes"] = true, ["esp.names"] = true, ["esp.health"] = true, ["esp.distance"] = true,
+		["esp.chams"] = false, ["esp.tracers"] = false, ["esp.team"] = true, ["esp.teamColor"] = false, ["esp.maxDist"] = 2500,
+		["esp.color"] = Color3.fromRGB(143, 124, 255), ["esp.fill"] = 75,
+		["vis.fullbright"] = false, ["vis.nofog"] = false, ["vis.noshadow"] = false, ["vis.time.on"] = false, ["vis.time.value"] = 14,
+		["vis.fov.on"] = false, ["vis.fov.value"] = 90, ["vis.zoom"] = false, ["vis.zoom.value"] = 600,
+		["vis.xray"] = false, ["vis.cross.on"] = false, ["vis.cross.size"] = 8, ["vis.cross.gap"] = 4,
+		["vis.freecam"] = false, ["vis.freecam.speed"] = 60,
+		-- misc
+		["misc.afk"] = true, ["misc.fps.on"] = false, ["misc.fps.value"] = 144,
+	})
+
+	-- ================================================================== movement
+	do
+		local O = Config.mirror({ speedOn = "move.speed.on", speedMode = "move.speed.mode", speed = "move.speed.value", jumpOn = "move.jump.on", jump = "move.jump.value",
+			inf = "move.infjump", bhop = "move.bhop", noclip = "move.noclip", gravOn = "move.gravity.on", grav = "move.gravity.value" })
+		local saved = weak()
+		local function mine(h) local s = saved[h]; if not s then s = {}; saved[h] = s end return s end
+		Motion.every(function(dt)
+			local h = hum()
+			if not h then return end
+			local r = root()
+			local s = mine(h)
+			-- speed
+			if O.speedOn and O.speedMode == "WalkSpeed" then
+				if s.ws == nil then s.ws = h.WalkSpeed end
+				h.WalkSpeed = O.speed
+			else
+				if s.ws ~= nil then h.WalkSpeed = s.ws; s.ws = nil end
+				if O.speedOn and r then
+					local d = h.MoveDirection
+					if d.Magnitude > 0 then r.CFrame = r.CFrame + d * O.speed * dt end
+				end
+			end
+			-- jump
+			if O.jumpOn then
+				if s.jp == nil then s.jp, s.ujp = h.JumpPower, h.UseJumpPower end
+				h.UseJumpPower = true
+				h.JumpPower = O.jump
+			elseif s.jp ~= nil then
+				h.UseJumpPower, h.JumpPower = s.ujp, s.jp
+				s.jp, s.ujp = nil, nil
+			end
+			if O.bhop and not typing() and UIS:IsKeyDown(Enum.KeyCode.Space) then h.Jump = true end
+		end, nil, "move.core")
+		H.connect(UIS.JumpRequest, function()
+			if not O.inf then return end
+			local h = hum()
+			if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+		end, "move.infjump")
+
+		-- noclip: remembers which parts it changed and gives them back
+		local changed = weak()
+		H.connect(RunService.Stepped, function()
+			if O.noclip then
+				local c = H.character()
+				if not c then return end
+				for _, p in ipairs(c:GetDescendants()) do
+					if p:IsA("BasePart") and p.CanCollide then changed[p] = true; p.CanCollide = false end
+				end
+			elseif next(changed) ~= nil then
+				for p in pairs(changed) do if p.Parent then p.CanCollide = true end end
+				table.clear(changed)
+			end
+		end, "move.noclip")
+
+		-- gravity
+		local origGravity
+		Motion.every(function()
+			if O.gravOn then
+				if origGravity == nil then origGravity = workspace.Gravity end
+				workspace.Gravity = O.grav
+			elseif origGravity ~= nil then
+				workspace.Gravity = origGravity
+				origGravity = nil
+			end
+		end, 4, "move.gravity")
+		H.own(function() if origGravity ~= nil then workspace.Gravity = origGravity end end)
+
+		-- fly: BodyVelocity + BodyGyro on the root, camera-relative
+		local FO = Config.mirror({ on = "move.fly.on", speed = "move.fly.speed" })
+		local bv, bg, platformWas
+		local function flyStop()
+			if bv then bv:Destroy(); bv = nil end
+			if bg then bg:Destroy(); bg = nil end
+			local h = hum()
+			if h and platformWas ~= nil then h.PlatformStand = platformWas end
+			platformWas = nil
+		end
+		H.own(flyStop)
+		H.connect(RunService.RenderStepped, function()
+			if not FO.on then
+				if bv or bg then flyStop() end
+				return
+			end
+			local r, h, c = root(), hum(), cam()
+			if not r or not h or not c then return end
+			if not bv or bv.Parent ~= r then
+				flyStop()
+				bv = Instance.new("BodyVelocity")
+				bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+				bv.Velocity = Vector3.zero
+				bv.Parent = r
+				bg = Instance.new("BodyGyro")
+				bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+				bg.P, bg.D = 90000, 500
+				bg.Parent = r
+				platformWas = h.PlatformStand
+			end
+			h.PlatformStand = true
+			local cf = c.CFrame
+			local d = Vector3.zero
+			if not typing() then
+				if UIS:IsKeyDown(Enum.KeyCode.W) then d += cf.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.S) then d -= cf.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.D) then d += cf.RightVector end
+				if UIS:IsKeyDown(Enum.KeyCode.A) then d -= cf.RightVector end
+				if UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.E) then d += Vector3.yAxis end
+				if UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.Q) then d -= Vector3.yAxis end
+			end
+			if d.Magnitude == 0 and H.touch then d = h.MoveDirection end
+			bv.Velocity = d.Magnitude > 0 and d.Unit * FO.speed or Vector3.zero
+			bg.CFrame = cf
+		end, "move.fly")
+
+		-- click teleport: hold Ctrl and click
+		local TO = Config.mirror({ on = "move.clicktp" })
+		H.connect(UIS.InputBegan, function(input, processed)
+			if not TO.on or processed or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+			if not (UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.RightControl)) then return end
+			local c, r = cam(), root()
+			if not c or not r then return end
+			local m = UIS:GetMouseLocation()
+			local ray = c:ViewportPointToRay(m.X, m.Y)
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = { H.character() }
+			local hit = workspace:Raycast(ray.Origin, ray.Direction * 5000, params)
+			if hit then r.CFrame = CFrame.new(hit.Position + Vector3.new(0, 3, 0)) * (r.CFrame - r.CFrame.Position) end
+		end, "move.clicktp")
+	end
+
+	-- ================================================================== aim assist + triggerbot
+	do
+		local O = Config.mirror({ on = "aim.on", mode = "aim.mode", fov = "aim.fov", smooth = "aim.smooth", part = "aim.part", team = "aim.team", wall = "aim.wall",
+			dist = "aim.dist", ring = "aim.ring", trig = "trig.on", delay = "trig.delay" })
+		local ring
+		local function ensureRing()
+			if ring and ring.Parent then return ring end
+			ring = Instance.new("Frame")
+			ring.Name = "AimRing"
+			ring.AnchorPoint = Vector2.new(0.5, 0.5)
+			ring.BackgroundTransparency = 1
+			ring.BorderSizePixel = 0
+			ring.Visible = false
+			ring.Parent = H.Window.hud
+			local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = ring
+			local st = Instance.new("UIStroke"); st.Thickness = 1.2; st.Transparency = 0.35; st.Color = Color3.new(1, 1, 1); st.Parent = ring
+			return ring
+		end
+		local function active()
+			if O.mode == "Always on" then return true end
+			if O.mode == "Hold left mouse" then return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end
+			return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+		end
+		local function aimPoints(char)
+			local head = char:FindFirstChild("Head")
+			local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+			if O.part == "Head" then return { head or torso } end
+			if O.part == "Torso" then return { torso } end
+			return { head, torso }
+		end
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		local function visible(c, from, part)
+			rayParams.FilterDescendantsInstances = { H.character() }
+			local hit = workspace:Raycast(from, part.Position - from, rayParams)
+			return hit == nil or hit.Instance:IsDescendantOf(part.Parent)
+		end
+		-- the enemy part nearest the pointer inside the FOV ring
+		local function pick(c)
+			local viewport = UIS:GetMouseLocation()
+			local best, bestDist
+			local origin = c.CFrame.Position
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= LP and alive(plr) and (not O.team or isEnemy(plr)) then
+					local char = plr.Character
+					for _, part in ipairs(aimPoints(char)) do
+						if part then
+							local sp, on = c:WorldToViewportPoint(part.Position)
+							if on then
+								local d = (Vector2.new(sp.X, sp.Y) - viewport).Magnitude
+								if d <= O.fov and (part.Position - origin).Magnitude <= O.dist and (bestDist == nil or d < bestDist) then
+									if not O.wall or visible(c, origin, part) then best, bestDist = part, d end
+								end
+							end
+						end
+					end
+				end
+			end
+			return best
+		end
+		RunService:BindToRenderStep("OmniHubAim", Enum.RenderPriority.Camera.Value + 1, function(dt)
+			if not H.alive or not H.Window.hud then return end
+			local r = ensureRing()
+			local c = cam()
+			if not O.on or not c or H.Window.open then r.Visible = false; return end
+			if O.ring then
+				local m = H.UI.mouse()
+				r.Position = UDim2.fromOffset(m.X, m.Y)
+				r.Size = UDim2.fromOffset(O.fov * 2, O.fov * 2)
+				r.Visible = true
+			else
+				r.Visible = false
+			end
+			if not active() or not alive(LP) then return end
+			local target = pick(c)
+			if not target then return end
+			local goal = CFrame.lookAt(c.CFrame.Position, target.Position)
+			local factor = math.clamp(O.smooth / 100, 0, 0.98)
+			local a = 1 - factor ^ (dt * 60)
+			c.CFrame = c.CFrame:Lerp(goal, a)
+		end)
+		H.own(function() pcall(function() RunService:UnbindFromRenderStep("OmniHubAim") end) end)
+		H.own(function() if ring then ring:Destroy() end end)
+
+		-- triggerbot: fire while the crosshair rests on an enemy (needs mouse1click)
+		local since
+		local trigParams = RaycastParams.new()
+		trigParams.FilterType = Enum.RaycastFilterType.Exclude
+		Motion.every(function()
+			if not O.trig or not H.cap.click or H.Window.open then since = nil; return end
+			local c = cam()
+			if not c or not alive(LP) then since = nil; return end
+			local m = UIS:GetMouseLocation()
+			local ray = c:ViewportPointToRay(m.X, m.Y)
+			trigParams.FilterDescendantsInstances = { H.character() }
+			local hit = workspace:Raycast(ray.Origin, ray.Direction * O.dist, trigParams)
+			local model = hit and hit.Instance:FindFirstAncestorOfClass("Model")
+			local plr = model and Players:GetPlayerFromCharacter(model)
+			if plr and isEnemy(plr) and alive(plr) then
+				since = since or os.clock()
+				if os.clock() - since >= O.delay / 1000 then
+					pcall(mouse1click)
+					since = os.clock() + 0.08
+				end
+			else
+				since = nil
+			end
+		end, 60, "trigger")
+	end
+
+	-- ================================================================== ESP
+	local Esp = { entries = {} }
+	F.Esp = Esp
+	do
+		local O = Config.mirror({ on = "esp.on", boxes = "esp.boxes", names = "esp.names", health = "esp.health", dist = "esp.distance", chams = "esp.chams",
+			tracers = "esp.tracers", team = "esp.team", teamColor = "esp.teamColor", maxDist = "esp.maxDist", color = "esp.color", fill = "esp.fill" })
+		local host
+		local function make(plr)
+			host = host or H.host()
+			local e = { plr = plr, shown = false }
+			e.box = Instance.new("BillboardGui")
+			e.box.Name = util.randomName()
+			e.box.AlwaysOnTop = true
+			e.box.Size = UDim2.fromScale(4, 5.6)
+			e.box.LightInfluence = 0
+			e.box.Enabled = false
+			local frame = Instance.new("Frame"); frame.BackgroundTransparency = 1; frame.BorderSizePixel = 0; frame.Size = UDim2.fromScale(1, 1); frame.Parent = e.box
+			e.stroke = Instance.new("UIStroke"); e.stroke.Thickness = 1.5; e.stroke.Parent = frame
+			e.hpBack = Instance.new("Frame"); e.hpBack.BackgroundColor3 = Color3.new(0, 0, 0); e.hpBack.BackgroundTransparency = 0.4; e.hpBack.BorderSizePixel = 0
+			e.hpBack.Position = UDim2.new(0, -6, 0, 0); e.hpBack.Size = UDim2.new(0, 3, 1, 0); e.hpBack.Parent = frame
+			e.hpFill = Instance.new("Frame"); e.hpFill.BorderSizePixel = 0; e.hpFill.AnchorPoint = Vector2.new(0, 1)
+			e.hpFill.Position = UDim2.fromScale(0, 1); e.hpFill.Size = UDim2.fromScale(1, 1); e.hpFill.Parent = e.hpBack
+			e.box.Parent = host
+			e.tag = Instance.new("BillboardGui")
+			e.tag.Name = util.randomName()
+			e.tag.AlwaysOnTop = true
+			e.tag.Size = UDim2.fromOffset(220, 34)
+			e.tag.StudsOffset = Vector3.new(0, 3.9, 0)
+			e.tag.LightInfluence = 0
+			e.tag.Enabled = false
+			e.name = Instance.new("TextLabel")
+			e.name.BackgroundTransparency = 1; e.name.Size = UDim2.new(1, 0, 0, 17); e.name.FontFace = H.F.text600; e.name.TextSize = 13
+			e.name.TextStrokeTransparency = 0.5; e.name.Parent = e.tag
+			e.info = Instance.new("TextLabel")
+			e.info.BackgroundTransparency = 1; e.info.Position = UDim2.fromOffset(0, 16); e.info.Size = UDim2.new(1, 0, 0, 14); e.info.FontFace = H.F.mono; e.info.TextSize = 11
+			e.info.TextStrokeTransparency = 0.5; e.info.Parent = e.tag
+			e.tag.Parent = host
+			e.high = Instance.new("Highlight")
+			e.high.Name = util.randomName()
+			e.high.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			e.high.Enabled = false
+			e.high.Parent = host
+			return e
+		end
+		local function destroy(e)
+			pcall(function() e.box:Destroy(); e.tag:Destroy(); e.high:Destroy() end)
+			if e.line then pcall(function() e.line:Remove() end) end
+		end
+		local function hide(e)
+			if not e.shown then return end
+			e.shown = false
+			e.box.Enabled, e.tag.Enabled, e.high.Enabled = false, false, false
+			if e.line then e.line.Visible = false end
+		end
+		local function add(plr)
+			if plr == LP or Esp.entries[plr] then return end
+			Esp.entries[plr] = make(plr)
+		end
+		local function remove(plr)
+			local e = Esp.entries[plr]
+			if e then destroy(e); Esp.entries[plr] = nil end
+		end
+		for _, p in ipairs(Players:GetPlayers()) do add(p) end
+		H.connect(Players.PlayerAdded, add, "esp.add")
+		H.connect(Players.PlayerRemoving, remove, "esp.remove")
+		H.own(function() for _, e in pairs(Esp.entries) do destroy(e) end table.clear(Esp.entries) end)
+
+		Motion.every(function()
+			local c = cam()
+			local myRoot = root()
+			for plr, e in pairs(Esp.entries) do
+				local char = plr.Character
+				local r = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+				local h = char and char:FindFirstChildOfClass("Humanoid")
+				local show = O.on and r ~= nil and h ~= nil and h.Health > 0 and (not O.team or isEnemy(plr))
+				local d = 0
+				if show then
+					d = myRoot and (r.Position - myRoot.Position).Magnitude or (c and (r.Position - c.CFrame.Position).Magnitude or 0)
+					if d > O.maxDist then show = false end
+				end
+				if not show then hide(e) else
+					e.shown = true
+					local color = O.teamColor and plr.TeamColor.Color or O.color
+					e.box.Adornee, e.tag.Adornee, e.high.Adornee = r, r, char
+					e.box.Enabled = O.boxes or O.health
+					e.stroke.Enabled = O.boxes
+					e.stroke.Color = color
+					e.tag.Enabled = O.names or O.dist
+					e.high.Enabled = O.chams
+					e.high.FillColor, e.high.OutlineColor = color, color
+					e.high.FillTransparency = 1 - O.fill / 100
+					e.high.OutlineTransparency = 0
+					local hp = math.clamp(h.Health / math.max(h.MaxHealth, 1), 0, 1)
+					e.hpBack.Visible = O.health
+					e.hpFill.Size = UDim2.fromScale(1, hp)
+					e.hpFill.BackgroundColor3 = Color3.fromHSV(0.33 * hp, 0.8, 1)
+					e.name.Visible = O.names
+					e.name.Text = plr.DisplayName
+					e.name.TextColor3 = color
+					e.info.Visible = O.dist
+					e.info.Text = string.format("%d studs  %d hp", math.floor(d + 0.5), math.floor(h.Health + 0.5))
+					e.info.TextColor3 = Color3.new(1, 1, 1)
+				end
+			end
+		end, 15, "esp.update")
+
+		-- tracers need Drawing (executor); drawn every frame
+		H.connect(RunService.RenderStepped, function()
+			if not H.cap.drawing then return end
+			local c = cam()
+			if not c then return end
+			local view = c.ViewportSize
+			for plr, e in pairs(Esp.entries) do
+				local r = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+				if O.on and O.tracers and e.shown and r then
+					if not e.line then
+						local ok, line = pcall(Drawing.new, "Line")
+						if ok then e.line = line; line.Thickness = 1.2; line.Transparency = 1 end
+					end
+					if e.line then
+						local sp, on = c:WorldToViewportPoint(r.Position)
+						e.line.Visible = on
+						if on then
+							e.line.From = Vector2.new(view.X / 2, view.Y)
+							e.line.To = Vector2.new(sp.X, sp.Y)
+							e.line.Color = O.teamColor and plr.TeamColor.Color or O.color
+						end
+					end
+				elseif e.line then
+					e.line.Visible = false
+				end
+			end
+		end, "esp.tracers")
+	end
+
+	-- ================================================================== visuals / world
+	do
+		local O = Config.mirror({ full = "vis.fullbright", fog = "vis.nofog", shadow = "vis.noshadow", timeOn = "vis.time.on", time = "vis.time.value",
+			fovOn = "vis.fov.on", fov = "vis.fov.value", zoom = "vis.zoom", zoomV = "vis.zoom.value", xray = "vis.xray",
+			crossOn = "vis.cross.on", crossSize = "vis.cross.size", crossGap = "vis.cross.gap", color = "esp.color" })
+		-- lighting: remember the game's values, hold ours four times a second, give the game's back
+		local saved
+		local PROPS = { "Brightness", "ClockTime", "FogEnd", "FogStart", "GlobalShadows", "Ambient", "OutdoorAmbient", "ExposureCompensation" }
+		local atmos = weak()
+		Motion.every(function()
+			local any = O.full or O.fog or O.shadow or O.timeOn
+			if any then
+				if not saved then
+					saved = {}
+					for _, p in ipairs(PROPS) do saved[p] = Lighting[p] end
+				end
+				if O.full then
+					Lighting.Brightness, Lighting.ExposureCompensation = 2, 0
+					Lighting.Ambient, Lighting.OutdoorAmbient = Color3.fromRGB(190, 190, 190), Color3.fromRGB(190, 190, 190)
+				end
+				if O.fog then
+					Lighting.FogEnd, Lighting.FogStart = 1e6, 1e6
+					for _, a in ipairs(Lighting:GetChildren()) do
+						if a:IsA("Atmosphere") then
+							if atmos[a] == nil then atmos[a] = a.Density end
+							a.Density = 0
+						end
+					end
+				end
+				if O.shadow then Lighting.GlobalShadows = false end
+				if O.timeOn then Lighting.ClockTime = O.time end
+			elseif saved then
+				for p, v in pairs(saved) do pcall(function() Lighting[p] = v end) end
+				for a, d in pairs(atmos) do if a.Parent then a.Density = d end end
+				table.clear(atmos)
+				saved = nil
+			end
+		end, 4, "vis.lighting")
+		H.own(function()
+			if saved then for p, v in pairs(saved) do pcall(function() Lighting[p] = v end) end end
+		end)
+
+		-- fov and zoom
+		local origFov, origZoom
+		H.connect(RunService.RenderStepped, function()
+			local c = cam()
+			if c then
+				if O.fovOn then
+					if origFov == nil then origFov = c.FieldOfView end
+					c.FieldOfView = O.fov
+				elseif origFov ~= nil then
+					c.FieldOfView = origFov
+					origFov = nil
+				end
+			end
+			if O.zoom then
+				if origZoom == nil then origZoom = LP.CameraMaxZoomDistance end
+				LP.CameraMaxZoomDistance = O.zoomV
+			elseif origZoom ~= nil then
+				LP.CameraMaxZoomDistance = origZoom
+				origZoom = nil
+			end
+		end, "vis.camera")
+
+		-- x-ray: local transparency only; nothing the server sees
+		local touched = weak()
+		local function xrayOne(p)
+			if not p:IsA("BasePart") or p.Transparency >= 0.9 then return end
+			local model = p:FindFirstAncestorOfClass("Model")
+			if model and model:FindFirstChildOfClass("Humanoid") then return end
+			touched[p] = true
+			p.LocalTransparencyModifier = 0.6
+		end
+		local xrayConn
+		Config.on("vis.xray", function(on)
+			if on then
+				task.spawn(function()
+					local n = 0
+					for _, p in ipairs(workspace:GetDescendants()) do
+						xrayOne(p)
+						n += 1
+						if n % 400 == 0 then task.wait() end
+					end
+				end)
+				xrayConn = workspace.DescendantAdded:Connect(function(p) if O.xray then xrayOne(p) end end)
+			else
+				if xrayConn then xrayConn:Disconnect(); xrayConn = nil end
+				for p in pairs(touched) do if p.Parent then p.LocalTransparencyModifier = 0 end end
+				table.clear(touched)
+			end
+		end, true)
+		H.own(function()
+			if xrayConn then xrayConn:Disconnect() end
+			for p in pairs(touched) do if p.Parent then p.LocalTransparencyModifier = 0 end end
+		end)
+
+		-- crosshair
+		local cross
+		local function crossBuild()
+			cross = Instance.new("Frame")
+			cross.Name = "Cross"
+			cross.BackgroundTransparency = 1
+			cross.AnchorPoint = Vector2.new(0.5, 0.5)
+			cross.Position = UDim2.fromScale(0.5, 0.5)
+			cross.Size = UDim2.fromOffset(0, 0)
+			cross.Parent = H.Window.hud
+			cross.Visible = false
+			cross.ZIndex = 2
+			cross:SetAttribute("n", 4)
+			for i = 1, 4 do
+				local bar = Instance.new("Frame")
+				bar.Name = "B" .. i
+				bar.BorderSizePixel = 0
+				bar.AnchorPoint = Vector2.new(0.5, 0.5)
+				bar.Parent = cross
+			end
+		end
+		Motion.every(function()
+			if not cross or not cross.Parent then if H.Window.hud then crossBuild() else return end end
+			cross.Visible = O.crossOn
+			if not O.crossOn then return end
+			local len, gap = O.crossSize, O.crossGap
+			local off = gap + len / 2
+			local layout = { { 0, -off, 2, len }, { 0, off, 2, len }, { -off, 0, len, 2 }, { off, 0, len, 2 } }
+			for i, l in ipairs(layout) do
+				local bar = cross["B" .. i]
+				bar.Position = UDim2.fromOffset(l[1], l[2])
+				bar.Size = UDim2.fromOffset(l[3], l[4])
+				bar.BackgroundColor3 = O.color
+			end
+		end, 10, "vis.cross")
+		H.own(function() if cross then cross:Destroy() end end)
+	end
+
+	-- ================================================================== freecam
+	do
+		local O = Config.mirror({ on = "vis.freecam", speed = "vis.freecam.speed" })
+		local active, cf, yaw, pitch, controls, rootAnchored
+		local function setControls(enabled)
+			pcall(function()
+				if not controls then controls = require(LP.PlayerScripts:WaitForChild("PlayerModule", 2)):GetControls() end
+				if enabled then controls:Enable() else controls:Disable() end
+			end)
+		end
+		local function stop()
+			if not active then return end
+			active = false
+			local c = cam()
+			if c then c.CameraType = Enum.CameraType.Custom end
+			UIS.MouseBehavior = Enum.MouseBehavior.Default
+			setControls(true)
+		end
+		H.own(stop)
+		H.connect(UIS.InputChanged, function(input)
+			if not active or input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+			if UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+				yaw -= input.Delta.X * 0.004
+				pitch = math.clamp(pitch - input.Delta.Y * 0.004, -1.5, 1.5)
+			end
+		end, "freecam.look")
+		H.connect(RunService.RenderStepped, function(dt)
+			local c = cam()
+			if not c then return end
+			if not O.on then stop(); return end
+			if not active then
+				active = true
+				cf = c.CFrame
+				local x, y = cf:ToOrientation()
+				pitch, yaw = x, y
+				c.CameraType = Enum.CameraType.Scriptable
+				setControls(false)
+			end
+			UIS.MouseBehavior = UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) and Enum.MouseBehavior.LockCurrentPosition or Enum.MouseBehavior.Default
+			local rot = CFrame.fromOrientation(pitch, yaw, 0)
+			local d = Vector3.zero
+			if not typing() then
+				if UIS:IsKeyDown(Enum.KeyCode.W) then d += rot.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.S) then d -= rot.LookVector end
+				if UIS:IsKeyDown(Enum.KeyCode.D) then d += rot.RightVector end
+				if UIS:IsKeyDown(Enum.KeyCode.A) then d -= rot.RightVector end
+				if UIS:IsKeyDown(Enum.KeyCode.E) then d += Vector3.yAxis end
+				if UIS:IsKeyDown(Enum.KeyCode.Q) then d -= Vector3.yAxis end
+			end
+			local boost = UIS:IsKeyDown(Enum.KeyCode.LeftShift) and 3 or 1
+			cf = CFrame.new(cf.Position + d * O.speed * boost * dt) * rot
+			c.CFrame = cf
+		end, "freecam")
+	end
+
+	-- ================================================================== misc
+	do
+		-- anti-AFK
+		local O = Config.mirror({ afk = "misc.afk", fps = "misc.fps.on", fpsV = "misc.fps.value" })
+		H.connect(LP.Idled, function()
+			if not O.afk then return end
+			local vu = S.VirtualUser
+			vu:CaptureController()
+			vu:ClickButton2(Vector2.new())
+		end, "misc.afk")
+		-- fps cap
+		local last
+		Motion.every(function()
+			if not H.cap.fps then return end
+			local want = O.fps and O.fpsV or nil
+			if want ~= last then
+				last = want
+				pcall(setfpscap, want or 60)
+			end
+		end, 2, "misc.fps")
+	end
+end
+
+-- =====================================================================================
+-- 08 pages  (Home, Combat, Movement, Visuals, Players, World, Server, Utility, Games, Settings)
+-- =====================================================================================
+do
+	local S, util, Motion, Theme, T, UI, Config, Window = H.S, H.util, H.Motion, H.Theme, H.T, H.UI, H.Config, H.Window
+	local Players, UIS = S.Players, S.UserInputService
+	local LP = H.LP
+	local hum, root = H.humanoid, H.root
+
+	local function cap(ok, label) return ok and "" or (" (" .. label .. " not available in this executor)") end
+
+	-- ---------------------------------------------------------------- Home
+	Window.page({ id = "home", title = "Home", group = "Hub", order = 10, eyebrow = "OmniHub", build = function(page)
+		page:custom(110, function(frame)
+			local card = UI.surface(frame, { Size = UDim2.fromScale(1, 1) })
+			UI.stroke(card, "ink", "strokeA")
+			UI.text(card, "OmniHub", "display", "ink", { Position = UDim2.fromOffset(22, 16), TextSize = 30 })
+			local nameLabel = UI.text(card, "Loading game name...", "body", "sub", { Position = UDim2.fromOffset(24, 62) })
+			UI.text(card, "v" .. H.VERSION .. "  -  " .. H.executor, "mono", "faint", { Position = UDim2.fromOffset(24, 82), TextSize = 11 })
+			task.spawn(function()
+				local ok, info = pcall(function() return S.MarketplaceService:GetProductInfo(game.PlaceId) end)
+				if nameLabel.Parent then nameLabel.Text = (ok and info and info.Name) or ("Place " .. tostring(game.PlaceId)) end
+			end)
+		end)
+		local s = page:section({ title = "Session", desc = "Live numbers for this server." })
+		s:stat({ label = "Players", get = function() return #Players:GetPlayers() .. " / " .. Players.MaxPlayers end })
+		s:stat({ label = "Ping", get = function() local p = 0; pcall(function() p = LP:GetNetworkPing() * 1000 end); return math.floor(p + 0.5) .. " ms" end })
+		s:stat({ label = "Place id", get = function() return tostring(game.PlaceId) end })
+		s:stat({ label = "Uptime", get = function() local t = math.floor(os.clock() - H.bootClock); return string.format("%d:%02d", t // 60, t % 60) end, hz = 1 })
+		local q = page:section({ title = "Quick toggles", desc = "Right click any switch to bind a key." })
+		q:toggle({ id = "move.fly.on", label = "Fly" })
+		q:toggle({ id = "move.noclip", label = "Noclip" })
+		q:toggle({ id = "esp.on", label = "Player ESP" })
+		q:toggle({ id = "aim.on", label = "Aim assist" })
+		q:toggle({ id = "vis.fullbright", label = "Fullbright" })
+		local e = page:section({ title = "Executor features", desc = "Controls that need a missing function say so instead of failing." })
+		for _, item in ipairs({ { "Drawing (tracers)", H.cap.drawing }, { "mouse1click (triggerbot)", H.cap.click }, { "setfpscap (FPS limit)", H.cap.fps },
+			{ "Clipboard", H.cap.clipboard }, { "File access (saved config)", H.cap.files }, { "HTTP request (server hop)", H.cap.request }, { "gethui (hidden GUI)", H.cap.gethui } }) do
+			e:stat({ label = item[1], get = function() return item[2] and "yes" or "no" end, hz = 0.2 })
+		end
+	end })
+
+	-- ---------------------------------------------------------------- Combat
+	Window.page({ id = "combat", title = "Combat", group = "Features", order = 20, build = function(page)
+		local a = page:section({ title = "Aim assist", desc = "Pulls the camera toward the enemy nearest your pointer, inside the ring." })
+		a:toggle({ id = "aim.on", label = "Enabled", tip = "Camera-based aim assist. Never moves while the menu is open." })
+		a:dropdown({ id = "aim.mode", label = "Activation", options = { "Hold right mouse", "Hold left mouse", "Always on" } })
+		a:dropdown({ id = "aim.part", label = "Target", options = { "Head", "Torso", "Nearest" } })
+		a:slider({ id = "aim.fov", label = "Field of view", min = 20, max = 600, step = 5, default = 160, suffix = " px" })
+		a:slider({ id = "aim.smooth", label = "Smoothing", min = 0, max = 95, step = 1, default = 35, suffix = "%", desc = "0 snaps, higher glides." })
+		a:slider({ id = "aim.dist", label = "Max distance", min = 50, max = 5000, step = 50, default = 1500, suffix = " studs" })
+		local f = page:section({ title = "Filters" })
+		f:toggle({ id = "aim.team", label = "Skip teammates" })
+		f:toggle({ id = "aim.wall", label = "Visible only", desc = "Raycasts to the target; walls block it." })
+		f:toggle({ id = "aim.ring", label = "Show field-of-view ring" })
+		local t = page:section({ title = "Triggerbot", desc = "Fires while the crosshair rests on an enemy." .. cap(H.cap.click, "mouse1click") })
+		t:toggle({ id = "trig.on", label = "Enabled" })
+		t:slider({ id = "trig.delay", label = "Delay", min = 0, max = 300, step = 5, default = 60, suffix = " ms" })
+		t:note({ text = "Uncalibrated: aim smoothing and trigger delay are starting values. Tune them per game." })
+	end })
+
+	-- ---------------------------------------------------------------- Movement
+	Window.page({ id = "movement", title = "Movement", group = "Features", order = 30, build = function(page)
+		local s = page:section({ title = "Speed", desc = "WalkSpeed is the property; CFrame adds distance per frame and survives games that reset it." })
+		s:toggle({ id = "move.speed.on", label = "Speed" })
+		s:dropdown({ id = "move.speed.mode", label = "Mode", options = { "WalkSpeed", "CFrame" } })
+		s:slider({ id = "move.speed.value", label = "Value", min = 4, max = 250, step = 1, default = 40 })
+		local j = page:section({ title = "Jumping" })
+		j:toggle({ id = "move.jump.on", label = "Jump power" })
+		j:slider({ id = "move.jump.value", label = "Power", min = 20, max = 500, step = 5, default = 90 })
+		j:toggle({ id = "move.infjump", label = "Infinite jump" })
+		j:toggle({ id = "move.bhop", label = "Bunny hop", desc = "Hold Space to keep jumping." })
+		local f = page:section({ title = "Flight and noclip" })
+		f:toggle({ id = "move.fly.on", label = "Fly", desc = "WASD, Space or E up, Shift or Q down." })
+		f:slider({ id = "move.fly.speed", label = "Fly speed", min = 10, max = 300, step = 5, default = 70 })
+		f:toggle({ id = "move.noclip", label = "Noclip", desc = "Parts it changed are restored when switched off." })
+		local t = page:section({ title = "Teleport and physics" })
+		t:toggle({ id = "move.clicktp", label = "Click teleport", desc = "Hold Ctrl and click the ground." })
+		t:toggle({ id = "move.gravity.on", label = "Custom gravity" })
+		t:slider({ id = "move.gravity.value", label = "Gravity", min = 0, max = 400, step = 1, default = 196 })
+		local saved
+		t:button({ label = "Save position", text = "Save", run = function()
+			local r = root()
+			if r then saved = r.CFrame; Window.toast({ title = "Position saved" }) end
+		end })
+		t:button({ label = "Teleport to saved", text = "Go", run = function()
+			local r = root()
+			if r and saved then r.CFrame = saved else Window.toast({ title = "Nothing saved yet", tone = "warn" }) end
+		end })
+	end })
+
+	-- ---------------------------------------------------------------- Visuals
+	Window.page({ id = "visuals", title = "Visuals", group = "Features", order = 40, build = function(page)
+		local e = page:section({ title = "Player ESP", desc = "Boxes, names and chams use Roblox GUI objects; tracers need Drawing." .. cap(H.cap.drawing, "Drawing") })
+		e:toggle({ id = "esp.on", label = "Enabled" })
+		e:toggle({ id = "esp.boxes", label = "Boxes" })
+		e:toggle({ id = "esp.names", label = "Names" })
+		e:toggle({ id = "esp.health", label = "Health bar" })
+		e:toggle({ id = "esp.distance", label = "Distance and health text" })
+		e:toggle({ id = "esp.chams", label = "Chams (highlight)" })
+		e:toggle({ id = "esp.tracers", label = "Tracers" })
+		local o = page:section({ title = "ESP options" })
+		o:toggle({ id = "esp.team", label = "Skip teammates" })
+		o:toggle({ id = "esp.teamColor", label = "Use team colours" })
+		o:slider({ id = "esp.maxDist", label = "Max distance", min = 100, max = 10000, step = 100, default = 2500, suffix = " studs" })
+		o:slider({ id = "esp.fill", label = "Chams fill", min = 0, max = 100, step = 5, default = 75, suffix = "%" })
+		o:swatches({ id = "esp.color", label = "Colour", colors = { { "Violet", Color3.fromRGB(143, 124, 255) }, { "Azure", Color3.fromRGB(77, 163, 255) }, { "Mint", Color3.fromRGB(69, 221, 168) },
+			{ "Ember", Color3.fromRGB(255, 122, 69) }, { "Rose", Color3.fromRGB(255, 92, 147) }, { "Gold", Color3.fromRGB(242, 193, 78) }, { "White", Color3.fromRGB(255, 255, 255) } } })
+		local w = page:section({ title = "World" })
+		w:toggle({ id = "vis.fullbright", label = "Fullbright" })
+		w:toggle({ id = "vis.nofog", label = "No fog" })
+		w:toggle({ id = "vis.noshadow", label = "No shadows" })
+		w:toggle({ id = "vis.time.on", label = "Force time of day" })
+		w:slider({ id = "vis.time.value", label = "Clock time", min = 0, max = 24, step = 0.25, default = 14 })
+		w:toggle({ id = "vis.xray", label = "X-ray", desc = "Local transparency on map parts; the server never sees it." })
+		local c = page:section({ title = "Camera" })
+		c:toggle({ id = "vis.fov.on", label = "Field of view" })
+		c:slider({ id = "vis.fov.value", label = "FOV", min = 30, max = 120, step = 1, default = 90 })
+		c:toggle({ id = "vis.zoom", label = "Unlock zoom" })
+		c:slider({ id = "vis.zoom.value", label = "Max zoom", min = 20, max = 5000, step = 20, default = 600 })
+		c:toggle({ id = "vis.freecam", label = "Freecam", desc = "WASD, Q and E, Shift to boost, hold right mouse to look." })
+		c:slider({ id = "vis.freecam.speed", label = "Freecam speed", min = 5, max = 300, step = 5, default = 60 })
+		local x = page:section({ title = "Crosshair" })
+		x:toggle({ id = "vis.cross.on", label = "Custom crosshair" })
+		x:slider({ id = "vis.cross.size", label = "Length", min = 2, max = 30, step = 1, default = 8, suffix = " px" })
+		x:slider({ id = "vis.cross.gap", label = "Gap", min = 0, max = 20, step = 1, default = 4, suffix = " px" })
+	end })
+
+	-- ---------------------------------------------------------------- Players
+	Window.page({ id = "players", title = "Players", group = "Features", order = 50, build = function(page)
+		local s = page:section({ title = "Player tools", desc = "Pick someone, then act on them." })
+		local picked
+		local function names()
+			local list = {}
+			for _, p in ipairs(Players:GetPlayers()) do if p ~= LP then list[#list + 1] = p.Name end end
+			table.sort(list)
+			return #list > 0 and list or { "(nobody else here)" }
+		end
+		local dd = s:dropdown({ label = "Player", options = names(), default = names()[1], changed = function(v) picked = Players:FindFirstChild(v) end })
+		picked = Players:FindFirstChild(names()[1])
+		local function refresh() dd.options(names()) end
+		H.connect(Players.PlayerAdded, refresh, "players.list")
+		H.connect(Players.PlayerRemoving, function() task.defer(refresh) end, "players.list")
+		local function target() return picked and picked.Parent and picked or nil end
+		s:button({ label = "Teleport to player", text = "Teleport", run = function()
+			local t, r = target(), root()
+			local tr = t and root(t)
+			if r and tr then r.CFrame = tr.CFrame * CFrame.new(0, 0, 3) else Window.toast({ title = "No target", tone = "warn" }) end
+		end })
+		local spectating = false
+		s:button({ label = "Spectate", text = "Toggle", run = function()
+			local c = H.camera()
+			if not c then return end
+			if spectating then
+				spectating = false
+				c.CameraSubject = hum()
+			else
+				local t = target()
+				local th = t and hum(t)
+				if th then spectating = true; c.CameraSubject = th else Window.toast({ title = "No target", tone = "warn" }) end
+			end
+		end })
+		s:button({ label = "Copy user id", text = "Copy", run = function()
+			local t = target()
+			if t and H.clipboard(t.UserId) then Window.toast({ title = "Copied", text = tostring(t.UserId), tone = "ok" })
+			else Window.toast({ title = "Clipboard not available", tone = "warn" }) end
+		end })
+		H.own(function() local c = H.camera(); if c and spectating then c.CameraSubject = hum() end end)
+		local p = page:section({ title = "Who is here" })
+		p:stat({ label = "Players", get = function() return #Players:GetPlayers() end })
+		p:stat({ label = "Your team", get = function() return LP.Team and LP.Team.Name or "none" end })
+	end })
+
+	-- ---------------------------------------------------------------- World / Server
+	local function teleport(fn)
+		local ok, err = pcall(fn)
+		if not ok then Window.toast({ title = "Teleport failed", text = tostring(err), tone = "bad" }) end
+	end
+	Window.page({ id = "server", title = "Server", group = "Features", order = 60, build = function(page)
+		local s = page:section({ title = "Servers", desc = "Rejoin and hop through the public server list." .. cap(H.cap.request, "HTTP request") })
+		s:button({ label = "Rejoin this server", text = "Rejoin", run = function()
+			teleport(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP) end)
+		end })
+		s:button({ label = "New server (same game)", text = "New", run = function() teleport(function() S.TeleportService:Teleport(game.PlaceId, LP) end) end })
+		local function hop(sort)
+			Window.toast({ title = "Looking for a server" })
+			task.spawn(function()
+				local body = H.httpGet(string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=%s&limit=100", game.PlaceId, sort))
+				local ok, data = pcall(function() return S.HttpService:JSONDecode(body or "") end)
+				if not (ok and type(data) == "table" and type(data.data) == "table") then Window.toast({ title = "Could not read the server list", tone = "bad" }) return end
+				local choices = {}
+				for _, sv in ipairs(data.data) do
+					if sv.id ~= game.JobId and (sv.playing or 0) < (sv.maxPlayers or 0) then choices[#choices + 1] = sv.id end
+				end
+				if #choices == 0 then Window.toast({ title = "No other open server found", tone = "warn" }) return end
+				teleport(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, choices[math.random(1, math.min(#choices, 8))], LP) end)
+			end)
+		end
+		s:button({ label = "Hop to a small server", text = "Hop", run = function() hop("Asc") end })
+		s:button({ label = "Hop to a full server", text = "Hop", run = function() hop("Desc") end })
+		local j = page:section({ title = "Join by id" })
+		local jobId = ""
+		j:input({ label = "Server job id", placeholder = "paste a JobId", changed = function(text) jobId = text end })
+		j:button({ label = "Join that server", text = "Join", run = function()
+			if jobId == "" then Window.toast({ title = "Paste a job id first", tone = "warn" }) return end
+			teleport(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LP) end)
+		end })
+		local c = page:section({ title = "Copy" })
+		local function copy(label, value)
+			if H.clipboard(value) then Window.toast({ title = label .. " copied", text = tostring(value), tone = "ok" }) else Window.toast({ title = "Clipboard not available", tone = "warn" }) end
+		end
+		c:button({ label = "Copy job id", text = "Copy", run = function() copy("Job id", game.JobId) end })
+		c:button({ label = "Copy place id", text = "Copy", run = function() copy("Place id", game.PlaceId) end })
+		c:button({ label = "Copy game link", text = "Copy", run = function() copy("Link", "https://www.roblox.com/games/" .. game.PlaceId) end })
+	end })
+
+	-- ---------------------------------------------------------------- Utility
+	Window.page({ id = "utility", title = "Utility", group = "Features", order = 70, build = function(page)
+		local u = page:section({ title = "Quality of life" })
+		u:toggle({ id = "misc.afk", label = "Anti-AFK", desc = "Stops the idle kick." })
+		u:toggle({ id = "misc.fps.on", label = "FPS limit", desc = "Sets the frame rate cap." .. cap(H.cap.fps, "setfpscap") })
+		u:slider({ id = "misc.fps.value", label = "Cap", min = 30, max = 360, step = 1, default = 144, suffix = " fps" })
+		u:button({ label = "Lower graphics", text = "Apply", desc = "One-way for this session: smooth plastic, no effects.", run = function()
+			task.spawn(function()
+				local n = 0
+				for _, d in ipairs(workspace:GetDescendants()) do
+					if d:IsA("BasePart") then d.Material = Enum.Material.SmoothPlastic; d.CastShadow = false
+					elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then d.Enabled = false end
+					n += 1
+					if n % 300 == 0 then task.wait() end
+				end
+				for _, e in ipairs(S.Lighting:GetChildren()) do if e:IsA("PostEffect") or e:IsA("Atmosphere") then pcall(function() e.Enabled = false end) end end
+				Window.toast({ title = "Graphics lowered", tone = "ok" })
+			end)
+		end })
+		local c = page:section({ title = "Character" })
+		c:button({ label = "Reset character", text = "Reset", run = function() local h = hum(); if h then h.Health = 0 end end })
+		c:button({ label = "Respawn in place", text = "Respawn", desc = "Resets, then returns you to where you stood.", run = function()
+			local r, h = root(), hum()
+			if not (r and h) then return end
+			local cf = r.CFrame
+			local conn
+			conn = LP.CharacterAdded:Connect(function(char)
+				conn:Disconnect()
+				local hrp = char:WaitForChild("HumanoidRootPart", 5)
+				if hrp then task.wait(0.1); hrp.CFrame = cf end
+			end)
+			h.Health = 0
+		end })
+		c:button({ label = "Sit", text = "Sit", run = function() local h = hum(); if h then h.Sit = true end end })
+		c:button({ label = "Copy position", text = "Copy", run = function()
+			local r = root()
+			if r and H.clipboard(string.format("%.2f, %.2f, %.2f", r.Position.X, r.Position.Y, r.Position.Z)) then Window.toast({ title = "Position copied", tone = "ok" }) else Window.toast({ title = "Nothing copied", tone = "warn" }) end
+		end })
+	end })
+
+	-- ---------------------------------------------------------------- Games (per-game packs)
+	Window.page({ id = "games", title = "Games", group = "Hub", order = 80, build = function(page)
+		local s = page:section({ title = "This game" })
+		s:stat({ label = "Place id", get = function() return tostring(game.PlaceId) end })
+		s:stat({ label = "Universe id", get = function() return tostring(game.GameId) end })
+		s:stat({ label = "Game pack", get = function() return H.activeGame and H.activeGame.name or "none (Universal only)" end, width = 170, hz = 1 })
+		local n = page:section({ title = "Adding a game pack" })
+		n:note({ text = "A pack is one table: OmniHub.game{ id = \"mygame\", name = \"My Game\", places = {123}, universes = {456}, tabs = function(hub) ... end }. "
+			.. "Its tabs() receives the hub and can call hub.Window.page{...} to add tabs built from the same controls. "
+			.. "Drop .lua files in workspace/OmniHub/games/ and they load at boot. Game-specific features need that game's own data, so none are bundled." })
+	end })
+
+	-- ---------------------------------------------------------------- Settings
+	Config.define("app.scheme", "dark"); Config.define("app.accent", Theme.accents[1][2]); Config.define("app.glass", 65); Config.define("app.radius", 100)
+	Config.define("app.scale", 100); Config.define("app.motion", "full"); Config.define("app.motionSpeed", 100); Config.define("app.island", true)
+	Config.define("app.key.menu", "RightShift"); Config.define("app.key.panic", "End"); Config.define("app.freeCursor", true)
+	Config.define("app.window.x", 0.5); Config.define("app.window.y", 0.5)
+	Window.page({ id = "settings", title = "Settings", group = "Hub", order = 90, build = function(page)
+		local a = page:section({ title = "Appearance" })
+		a:segmented({ id = "app.scheme", label = "Scheme", options = { { "dark", "Graphite" }, { "midnight", "Midnight" }, { "light", "Porcelain" } }, width = 240 })
+		local sw = {}
+		for _, acc in ipairs(Theme.accents) do sw[#sw + 1] = { acc[1], acc[2] } end
+		a:swatches({ id = "app.accent", label = "Accent", colors = sw })
+		a:slider({ id = "app.glass", label = "Glass", min = 0, max = 100, step = 1, default = 65, suffix = "%", desc = "Clear at 0, tinted at 100." })
+		a:slider({ id = "app.radius", label = "Roundness", min = 0, max = 150, step = 5, default = 100, suffix = "%" })
+		a:slider({ id = "app.scale", label = "Interface size", min = 60, max = 160, step = 5, default = 100, suffix = "%" })
+		local m = page:section({ title = "Motion" })
+		m:segmented({ id = "app.motion", label = "Motion", options = { { "full", "Full" }, { "reduced", "Reduced" } }, width = 180 })
+		m:slider({ id = "app.motionSpeed", label = "Speed", min = 50, max = 200, step = 5, default = 100, suffix = "%" })
+		local k = page:section({ title = "Keys" })
+		k:keybind({ id = "app.key.menu", label = "Open and close menu", default = "RightShift" })
+		k:keybind({ id = "app.key.panic", label = "Panic: unload everything", default = "End" })
+		k:toggle({ id = "app.island", label = "Show the island while hidden", bindable = false })
+		k:toggle({ id = "app.freeCursor", label = "Free the cursor while open", bindable = false })
+		local d = page:section({ title = "Data", desc = H.fs.ok and "Settings save to workspace/OmniHub/config.json." or "No file access here: settings last only for this session." })
+		d:button({ label = "Save now", text = "Save", run = function() Config.flush(); Window.toast({ title = "Saved", tone = "ok" }) end })
+		d:button({ label = "Reset every setting", text = "Reset", style = "danger", run = function() Config.resetAll(); Window.toast({ title = "Defaults restored" }) end })
+		d:button({ label = "Copy diagnostics", text = "Copy", run = function()
+			local lines = { "OmniHub " .. H.VERSION, "executor: " .. H.executor, "place: " .. game.PlaceId }
+			for _, f in ipairs(H.faults) do lines[#lines + 1] = string.format("[%.1fs] %s: %s", f.at, f.scope, string.sub(f.message, 1, 200)) end
+			Window.toast({ title = H.clipboard(table.concat(lines, "\n")) and "Diagnostics copied" or "Clipboard not available", tone = "ok" })
+		end })
+		d:stat({ label = "Faults this session", get = function() return #H.faults end, hz = 1 })
+		local u = page:section({ title = "Danger" })
+		u:button({ label = "Unload OmniHub", text = "Unload", style = "danger", run = function() H.unload() end })
+	end })
+
+	Config.on("app.scheme", function(v) Theme.set({ scheme = v }) end)
+	Config.on("app.accent", function(v) Theme.set({ accent = v }) end)
+	Config.on("app.glass", function(v) Theme.set({ glass = v / 100 }) end)
+	Config.on("app.radius", function(v) Theme.set({ radius = v / 100 }) end)
+	Config.on("app.scale", function() Window.rescale() end)
+	Config.on("app.motion", function(v) H.Motion.reduced = v == "reduced" end)
+	Config.on("app.motionSpeed", function(v) H.Motion.speed = v / 100 end)
+end
+
+-- =====================================================================================
+-- 10 registry  (per-game packs)
+-- =====================================================================================
+do
+	local Window = H.Window
+	function H.game(spec)
+		if type(spec) ~= "table" or type(spec.id) ~= "string" then error("OmniHub.game needs a table with an id", 2) end
+		spec.name = spec.name or spec.id
+		spec.places, spec.universes = spec.places or {}, spec.universes or {}
+		H.games[#H.games + 1] = spec
+		return spec
+	end
+	function H.loadPacks()
+		if H.fs.ok and H.cap.listfiles then
+			H.fs.ensure("games")
+			local ok, files = pcall(listfiles, H.fs.root .. "/games")
+			if ok and type(files) == "table" then
+				for _, file in ipairs(files) do
+					if string.match(file, "%.luau?$") then
+						local okRead, source = pcall(readfile, file)
+						local chunk, problem = loadstring(okRead and source or "", "=" .. file)
+						if chunk then H.try("pack " .. file, chunk, H) else H.fault("pack " .. file, problem) end
+					end
+				end
+			end
+		end
+		for _, spec in ipairs(H.games) do
+			if table.find(spec.universes, game.GameId) or table.find(spec.places, game.PlaceId) then
+				H.activeGame = spec
+				if type(spec.tabs) == "function" then H.try("pack " .. spec.id, spec.tabs, H) end
+				Window.toast({ title = "Game pack loaded", text = spec.name, tone = "ok" })
+				return spec
+			end
+		end
+		return nil
+	end
+end
+
+-- =====================================================================================
+-- 99 boot
+-- =====================================================================================
+do
+	local S, Motion, Theme, Config, Window = H.S, H.Motion, H.Theme, H.Config, H.Window
+	local UIS = S.UserInputService
+	local function boot()
+		if not game:IsLoaded() then game.Loaded:Wait() end
+		-- preferences first, so the first frame already has the right look
+		Theme.state.scheme = Config.get("app.scheme")
+		Theme.state.accent = Config.get("app.accent")
+		Theme.state.glass = Config.get("app.glass") / 100
+		Theme.state.radius = Config.get("app.radius") / 100
+		Theme.apply()
+		Motion.reduced = Config.get("app.motion") == "reduced"
+		Motion.speed = Config.get("app.motionSpeed") / 100
+		Window.build()
+		Window.rebuildNav()
+		Window.island()
+		H.loadPacks()
+		Window.rebuildNav()
+		H.connect(UIS.InputBegan, function(input)
+			if Config.capturing or UIS:GetFocusedTextBox() then return end
+			if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+			local name = input.KeyCode.Name
+			if name == Config.get("app.key.menu") then Window.toggle()
+			elseif name == Config.get("app.key.panic") then H.unload()
+			elseif input.KeyCode == Enum.KeyCode.K and (UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.RightControl)) and Window.open then Window.palette() end
+		end, "boot.keys")
+		task.delay(0.4, function() if H.alive then Window.prebuild() end end)
+		Window.show(true)
+		task.delay(0.6, function()
+			if H.alive then Window.toast({ title = "OmniHub ready", text = Config.keyLabel(Config.get("app.key.menu")) .. " toggles the menu", tone = "ok" }) end
+		end)
+	end
+	task.spawn(function()
+		local ok, err = xpcall(boot, function(e) return tostring(e) .. "\n" .. debug.traceback("", 2) end)
+		if not ok then
+			H.fault("boot", err)
+			pcall(function() S.StarterGui:SetCore("SendNotification", { Title = "OmniHub", Text = "Failed to start: " .. string.sub(tostring(err), 1, 120), Duration = 8 }) end)
+		end
+	end)
+end
+
+return H
