@@ -1,0 +1,18816 @@
+local accent, removePin, rebuildQuick, highlight, coreGui, userInputService, tweenService, httpService, players, virtualUser, textService, guiService, logService, starterGui, runService, soundService, env, running, connections, extraCleanup, track, onCleanup, new, corner, padding, ICON_PATH, ICON_FONT, sans, MONO, C, hasFS, esc, ROOT, FOLDER, MUSIC_DIR, QUICK_SCRIPTS_THUMBS, THUMBS_DIR, fsJoin, fsParent, fsExt, fsStripExt, fsIsDir, fsIsFile, fsRead, fsWrite, fsEnsure, fsParallel, fsList, fsDeleteTree, fsCopyFile, fsCopyTree, fsUnique, fsEnsureStorage, fsMigrateStorage, defaults, accents, settings, saveSettings, bind, setSetting, applyAllSettings, lighten, iconFont, newIcon, iconBtn, UI, accentTargets
+;(function()
+coreGui = game:GetService("CoreGui")
+userInputService = game:GetService("UserInputService")
+tweenService = game:GetService("TweenService")
+httpService = game:GetService("HttpService")
+players = game:GetService("Players")
+virtualUser = game:GetService("VirtualUser")
+textService = game:GetService("TextService")
+guiService = game:GetService("GuiService")
+logService = game:GetService("LogService")
+starterGui = game:GetService("StarterGui")
+runService = game:GetService("RunService")
+soundService = game:GetService("SoundService")
+
+env = (getgenv and getgenv()) or _G
+if type(env.BasesMenuCleanup) == "function" then
+	pcall(env.BasesMenuCleanup)
+end
+local oldGui = coreGui:FindFirstChild("WindowHost:bases_menu")
+if oldGui then
+	oldGui:Destroy()
+end
+
+running = true
+connections = {}
+extraCleanup = {}
+function track(conn)
+	connections[#connections + 1] = conn
+	return conn
+end
+function onCleanup(fn)
+	extraCleanup[#extraCleanup + 1] = fn
+end
+
+function new(class, props, parent)
+	local obj = Instance.new(class)
+	if props then
+		for k, v in pairs(props) do
+			obj[k] = v
+		end
+	end
+	if class == "ScrollingFrame" then
+		obj.ScrollBarThickness = 0
+	end
+	if parent then
+		obj.Parent = parent
+	end
+	return obj
+end
+
+function corner(parent, radius)
+	return new("UICorner", { CornerRadius = UDim.new(0, radius or 8) }, parent)
+end
+
+function padding(parent, top, right, bottom, left)
+	return new("UIPadding", {
+		PaddingTop = UDim.new(0, top or 0),
+		PaddingRight = UDim.new(0, right or 0),
+		PaddingBottom = UDim.new(0, bottom or 0),
+		PaddingLeft = UDim.new(0, left or 0),
+	}, parent)
+end
+
+ICON_PATH = "rbxasset://LuaPackages/Packages/_Index/BuilderIcons/BuilderIcons/BuilderIcons.json"
+ICON_FONT = Font.new(ICON_PATH, Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+function sans(weight)
+	return Font.new("rbxasset://fonts/families/BuilderSans.json", weight or Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+end
+MONO = Font.new("rbxasset://fonts/families/RobotoMono.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+
+C = {
+	text = Color3.new(0.968, 0.968, 0.972),
+	sub = Color3.new(0.639, 0.635, 0.647),
+	card = Color3.new(0.12, 0.12, 0.14),
+	dark = Color3.new(0.08, 0.08, 0.1),
+	dim = Color3.fromRGB(30, 30, 30),
+	red = Color3.fromRGB(235, 64, 82),
+	yellow = Color3.fromRGB(255, 184, 0),
+	green = Color3.fromRGB(46, 204, 113),
+}
+
+hasFS = (writefile and readfile and isfolder and makefolder and listfiles and delfile and isfile) and true or false
+
+local escMap = { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;", ['"'] = "&quot;", ["'"] = "&apos;" }
+function esc(s)
+	return (s:gsub("[&<>\"']", escMap))
+end
+
+ROOT = "BasesMenu"
+local SETTINGS_FILE = ROOT .. "/Settings.json"
+FOLDER = ROOT .. "/Scripts"
+MUSIC_DIR = ROOT .. "/Music"
+QUICK_SCRIPTS_THUMBS = ROOT .. "/Quick Scripts"
+THUMBS_DIR = ROOT .. "/Thumbs"
+local OLD_SETTINGS = "BasesHub_Settings.json"
+local OLD_SCRIPTS = "BasesHub_Scripts"
+local OLD_MUSIC = "BasesHub_Music"
+local OLD_THUMBS = "BasesHub_Thumbs"
+
+local function fsNorm(p)
+	p = tostring(p or "")
+	p = p:gsub("\\", "/")
+	p = p:gsub("/+", "/")
+	p = p:gsub("^%./", "")
+	p = p:gsub("/$", "")
+	if p == "." then
+		p = ""
+	end
+	return p
+end
+function fsJoin(dir, name)
+	dir = fsNorm(dir)
+	if dir == "" then
+		return name
+	end
+	return dir .. "/" .. name
+end
+function fsParent(p)
+	return fsNorm(p):match("^(.*)/[^/]*$") or ""
+end
+function fsExt(name)
+	return (tostring(name):match("%.([%w_]+)$") or ""):lower()
+end
+function fsStripExt(name)
+	return (tostring(name):gsub("%.[^%.]+$", ""))
+end
+function fsIsDir(path)
+	local ok, res = pcall(isfolder, path)
+	return ok and res == true
+end
+function fsIsFile(path)
+	local ok, res = pcall(isfile, path)
+	return ok and res == true
+end
+function fsRead(path)
+	local ok, data = pcall(readfile, path)
+	if ok and type(data) == "string" then
+		return data
+	end
+	return nil
+end
+function fsWrite(path, data)
+	return (pcall(writefile, path, data))
+end
+function fsEnsure(path)
+	path = fsNorm(path)
+	local acc = ""
+	for part in path:gmatch("[^/]+") do
+		acc = acc == "" and part or (acc .. "/" .. part)
+		if not fsIsDir(acc) then
+			pcall(makefolder, acc)
+		end
+	end
+	return path == "" or fsIsDir(path)
+end
+
+function fsParallel(count, fn)
+	local chunk = 24
+	local first = 1
+	while first <= count do
+		local last = math.min(count, first + chunk - 1)
+		local left = last - first + 1
+		for k = first, last do
+			task.spawn(function()
+				pcall(fn, k)
+				left -= 1
+			end)
+		end
+		local waited = 0
+		while left > 0 and waited < 20 do
+			waited += task.wait()
+		end
+		first = last + 1
+	end
+end
+
+function fsList(dir, light)
+	dir = fsNorm(dir)
+	local out, seen = {}, {}
+	local ok, res = pcall(listfiles, dir)
+	if (not ok or type(res) ~= "table") and dir == "" then
+		ok, res = pcall(listfiles, ".")
+	end
+	if not ok or type(res) ~= "table" then
+		return out, false
+	end
+	for _, entry in pairs(res) do
+		local name = fsNorm(entry):match("([^/]+)$")
+		if name and name ~= "." and name ~= ".." then
+			local path = fsJoin(dir, name)
+			local key = path:lower()
+			if not seen[key] then
+				seen[key] = true
+				out[#out + 1] = { name = name, path = path, isDir = false }
+			end
+		end
+	end
+	if light then
+		for _, e in ipairs(out) do
+			e.isDir = fsExt(e.name) == ""
+		end
+	else
+		fsParallel(#out, function(k)
+			out[k].isDir = fsIsDir(out[k].path)
+		end)
+	end
+	return out, true
+end
+
+function fsDeleteTree(path)
+	if fsIsDir(path) then
+		for _, e in ipairs(fsList(path)) do
+			if e.isDir then
+				fsDeleteTree(e.path)
+			else
+				pcall(delfile, e.path)
+			end
+		end
+		if delfolder then
+			pcall(delfolder, path)
+		end
+		return not fsIsDir(path)
+	end
+	pcall(delfile, path)
+	return not fsIsFile(path)
+end
+
+function fsCopyFile(src, dst, deleteSource)
+	local data = fsRead(src)
+	if not data then
+		return false
+	end
+	fsEnsure(fsParent(dst))
+	if not fsWrite(dst, data) then
+		return false
+	end
+	local back = fsRead(dst)
+	if not back or #back ~= #data then
+		return false
+	end
+	if deleteSource then
+		pcall(delfile, src)
+	end
+	return true
+end
+
+function fsCopyTree(src, dst, deleteSource, depth)
+	depth = depth or 0
+	if depth > 8 then
+		return 0, 1
+	end
+	if not fsIsDir(src) then
+		if fsCopyFile(src, dst, deleteSource) then
+			return 1, 0
+		end
+		return 0, 1
+	end
+	fsEnsure(dst)
+	local okCount, failCount = 0, 0
+	for _, e in ipairs(fsList(src)) do
+		local a, b = fsCopyTree(e.path, fsJoin(dst, e.name), deleteSource, depth + 1)
+		okCount += a
+		failCount += b
+	end
+	if deleteSource and failCount == 0 and delfolder then
+		pcall(delfolder, src)
+	end
+	return okCount, failCount
+end
+
+function fsUnique(dir, name)
+	local base, ext = name:match("^(.*)(%.[^%.]+)$")
+	if not base then
+		base, ext = name, ""
+	end
+	local candidate, n = name, 1
+	while fsIsFile(fsJoin(dir, candidate)) or fsIsDir(fsJoin(dir, candidate)) do
+		n += 1
+		candidate = base .. " " .. n .. ext
+	end
+	return candidate
+end
+
+function fsEnsureStorage()
+	fsEnsure(ROOT)
+	local dirs = { FOLDER, MUSIC_DIR, THUMBS_DIR, QUICK_SCRIPTS_THUMBS }
+	fsParallel(#dirs, function(k)
+		fsEnsure(dirs[k])
+	end)
+end
+
+function fsMigrateStorage()
+	pcall(function()
+		if fsIsFile(OLD_SETTINGS) then
+			if not fsIsFile(SETTINGS_FILE) then
+				fsCopyFile(OLD_SETTINGS, SETTINGS_FILE, true)
+			else
+				pcall(delfile, OLD_SETTINGS)
+			end
+		end
+		if fsIsDir(OLD_SCRIPTS) then
+			fsCopyTree(OLD_SCRIPTS, FOLDER, true)
+		end
+		if fsIsDir(OLD_MUSIC) then
+			fsCopyTree(OLD_MUSIC, MUSIC_DIR, true)
+		end
+		if fsIsDir(OLD_THUMBS) then
+			fsDeleteTree(OLD_THUMBS)
+		end
+	end)
+end
+
+defaults = {
+	antiIdle = false,
+	unlockFps = false,
+	fpsCap = 144,
+	highlight = true,
+	fontSize = 14,
+	tabSize = 4,
+	autoIndent = true,
+	autoClose = true,
+	lineNumbers = true,
+	highlightLine = true,
+	indentGuides = true,
+	bracketMatch = true,
+	errorIndicators = true,
+	caretBlink = true,
+	terminalPort = "8765",
+	terminalRoot = "",
+	terminalFontSize = 13,
+	terminalMaxLines = 5000,
+	terminalAutoscroll = true,
+	terminalEcho = true,
+	terminalHistory = 100,
+	statusBar = true,
+	autoSave = true,
+	autoSaveInterval = 3,
+	confirmDelete = true,
+	hubMax = 50,
+	hideKey = false,
+	hidePatched = false,
+	verifiedOnly = false,
+	consoleCapture = true,
+	consoleAutoscroll = true,
+	consoleMax = 300,
+	hideNotifs = false,
+	topmost = true,
+	opacity = 0.08,
+	accent = 1,
+	toggleKey = "RightAlt",
+	bgImage = true,
+	bgTransparency = 0.8,
+	moveMenu = true,
+	configRev = 5,
+	notifyDuration = 5,
+	confirmHub = false,
+	editorHeight = 330,
+	theme = 1,
+	trimOnSave = false,
+	execKey = "F5",
+	hubThumbs = true,
+	hubCategory = 1,
+	hubSort = 1,
+	openOnStart = false,
+	rememberPos = false,
+	winX = 0,
+	winY = 0,
+	playerRefresh = 1,
+	playerSort = 1,
+	playerDisplayNames = true,
+	playerDistance = true,
+	tpOffset = 3,
+	followDistance = 6,
+	hlColor = 1,
+	hlFill = 0.5,
+	pinned = {},
+	history = {},
+	collapsed = {},
+	tabOrder = {},
+	wsSort = 1,
+	wsPreview = true,
+	wsConfirm = true,
+	musicVolume = 0.6,
+	musicMuted = false,
+	musicSpeed = 1,
+	musicShuffle = false,
+	musicRepeat = 1,
+	musicPreset = 1,
+	musicSort = 1,
+	musicAutoNext = true,
+	musicNotify = false,
+	musicTags = true,
+	musicCover = true,
+	runStats = {},
+	lyricsOnline = true,
+	lyricsAnim = true,
+	lyricsSize = 20,
+	lyricsOffset = 0,
+	uiScale = 1,
+	modalHandler = true,
+	smoothAnim = false,
+	introSeen = false,
+	brandName = "Bases Menu",
+	consoleFontSize = 13,
+	wsLast = "",
+	terminalCookies = "",
+	musicFade = 1,
+	musicResume = false,
+	musicLast = "",
+	musicContinue = true,
+	musicPos = 0,
+	musicWasPlaying = false,
+	musicFavorites = {},
+	musicRecent = {},
+	musicPlayKey = "None",
+	musicNextKey = "None",
+	musicPrevKey = "None",
+	musicKeepPitch = false,
+	musicSleepFade = true,
+	musicSleepDefault = 20,
+	storageMigrated = false,
+	lpSpeedOn = false,
+	lpSpeed = 50,
+	lpJumpOn = false,
+	lpJump = 100,
+	lpInfJump = false,
+	lpBhop = false,
+	lpFly = false,
+	lpFlySpeed = 60,
+	lpNoclip = false,
+	lpClickTp = false,
+	lpFreeze = false,
+	lpGravityOn = false,
+	lpGravity = 100,
+	lpHipOn = false,
+	lpHip = 6,
+	lpFovOn = false,
+	lpFov = 90,
+	lpZoomOn = false,
+	lpZoom = 500,
+	lpFullbright = false,
+	lpNoFog = false,
+	lpTimeOn = false,
+	lpTime = 14,
+}
+
+accents = {
+	{ name = "Blue", color = Color3.fromRGB(51, 95, 255) },
+	{ name = "Purple", color = Color3.fromRGB(140, 82, 255) },
+	{ name = "Green", color = Color3.fromRGB(38, 180, 100) },
+	{ name = "Red", color = Color3.fromRGB(235, 64, 82) },
+	{ name = "Orange", color = Color3.fromRGB(240, 140, 50) },
+	{ name = "Pink", color = Color3.fromRGB(235, 90, 160) },
+}
+
+settings = {}
+for k, v in pairs(defaults) do
+	settings[k] = (type(v) == "table") and {} or v
+end
+
+if hasFS then
+	pcall(function()
+		local readPath
+		if isfile(SETTINGS_FILE) then
+			readPath = SETTINGS_FILE
+		elseif isfile(OLD_SETTINGS) then
+			readPath = OLD_SETTINGS
+		end
+		if readPath then
+			local data = httpService:JSONDecode(readfile(readPath))
+			if type(data) == "table" then
+				local rev = tonumber(data.configRev) or 0
+				if rev < 3 then
+					data.toggleKey = nil
+				end
+				if rev < 4 then
+					data.topmost = nil
+					data.editorHeight = nil
+				end
+				if rev < 5 and type(data.hubCategory) == "number" and data.hubCategory >= 2 then
+					data.hubCategory += 1
+				end
+				for k, v in pairs(data) do
+					if defaults[k] ~= nil and type(v) == type(defaults[k]) then
+						settings[k] = v
+					end
+				end
+			end
+		end
+	end)
+end
+do
+	local oldPrefix = OLD_MUSIC .. "/"
+	local function fixPath(path)
+		if type(path) == "string" and path:sub(1, #oldPrefix) == oldPrefix then
+			return MUSIC_DIR .. "/" .. path:sub(#oldPrefix + 1)
+		end
+		return path
+	end
+	for _, key in ipairs({ "musicFavorites", "musicRecent" }) do
+		for i, path in ipairs(settings[key]) do
+			settings[key][i] = fixPath(path)
+		end
+	end
+	settings.musicLast = fixPath(settings.musicLast)
+end
+settings.accent = math.clamp(math.floor(settings.accent), 1, #accents)
+settings.fontSize = math.clamp(settings.fontSize, 10, 24)
+settings.tabSize = math.clamp(math.floor(settings.tabSize), 1, 8)
+settings.fpsCap = math.clamp(settings.fpsCap, 30, 360)
+settings.opacity = math.clamp(settings.opacity, 0, 0.8)
+settings.autoSaveInterval = math.max(1, settings.autoSaveInterval)
+settings.editorHeight = math.clamp(settings.editorHeight, 200, 420)
+settings.theme = math.max(1, math.floor(settings.theme))
+settings.hubCategory = math.max(1, math.floor(settings.hubCategory))
+settings.hubSort = math.max(1, math.floor(settings.hubSort))
+settings.playerRefresh = math.max(0.25, settings.playerRefresh)
+settings.hlColor = math.clamp(math.floor(settings.hlColor), 1, 6)
+settings.musicRepeat = math.clamp(math.floor(settings.musicRepeat), 1, 3)
+settings.uiScale = math.clamp(settings.uiScale, 0.5, 1.5)
+settings.consoleFontSize = math.clamp(math.floor(settings.consoleFontSize), 9, 24)
+
+local saveQueued = false
+local rootEnsured = false
+function saveSettings()
+	if not hasFS or saveQueued then
+		return
+	end
+	saveQueued = true
+	task.delay(0.5, function()
+		saveQueued = false
+		pcall(function()
+			if not rootEnsured then
+				rootEnsured = fsEnsure(ROOT)
+			end
+			local out = {}
+			for k, v in pairs(settings) do
+				if string.sub(k, 1, 2) ~= "lp" then
+					out[k] = v
+				end
+			end
+			writefile(SETTINGS_FILE, httpService:JSONEncode(out))
+		end)
+	end)
+end
+
+if settings.hubCategory > 1 then
+	saveSettings()
+end
+
+local listeners = {}
+function bind(key, fn, noInitial)
+	listeners[key] = listeners[key] or {}
+	table.insert(listeners[key], { fn = fn, noInitial = noInitial })
+end
+function setSetting(key, value)
+	if key == "musicRepeat" then
+		value = math.clamp(math.floor(tonumber(value) or 1), 1, 3)
+	elseif key == "uiScale" then
+		value = math.clamp(tonumber(value) or 1, 0.5, 1.5)
+	end
+	settings[key] = value
+	saveSettings()
+	if listeners[key] then
+		for _, l in ipairs(listeners[key]) do
+			pcall(l.fn, value)
+		end
+	end
+end
+function applyAllSettings()
+	for key, list in pairs(listeners) do
+		for _, l in ipairs(list) do
+			if not l.noInitial then
+				pcall(l.fn, settings[key])
+			end
+		end
+	end
+end
+
+function accent()
+	return accents[settings.accent].color
+end
+function lighten(c)
+	return c:Lerp(Color3.new(1, 1, 1), 0.15)
+end
+
+function iconFont(filled)
+	return Font.new(ICON_PATH, filled and Enum.FontWeight.Bold or Enum.FontWeight.Regular, Enum.FontStyle.Normal)
+end
+
+local iconOk
+do
+	local checked = {}
+	iconOk = function(name)
+		local known = checked[name]
+		if known ~= nil then
+			return known
+		end
+		local ok, width = pcall(function()
+			local params = Instance.new("GetTextBoundsParams")
+			params.Text = name
+			params.Font = iconFont(false)
+			params.Size = 16
+			params.Width = 10000
+			return textService:GetTextBoundsAsync(params).X
+		end)
+		local good = not (ok and type(width) == "number" and width <= 0)
+		checked[name] = good
+		return good
+	end
+end
+local function pickIcon(candidates)
+	if type(candidates) == "string" then
+		candidates = { candidates }
+	end
+	for _, name in ipairs(candidates) do
+		if iconOk(name) then
+			return name
+		end
+	end
+	return "diamond-simplified"
+end
+
+function newIcon(parent, candidates, filled, size, color)
+	local lbl = new("TextLabel", {
+		Size = UDim2.fromOffset(size + 4, size + 4),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = color or C.text,
+		TextSize = size,
+		FontFace = iconFont(filled),
+		Visible = false,
+	}, parent)
+	task.spawn(function()
+		local name = pickIcon(candidates)
+		if lbl.Parent then
+			lbl.Text = name
+			lbl.Visible = true
+		end
+	end)
+	return lbl
+end
+
+function iconBtn(text, icon, w, parent, h, filled, textSize)
+	local b = new("TextButton", {
+		Size = UDim2.new(0, w, 0, h or 30),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.3,
+		AutoButtonColor = false,
+		Text = "",
+	}, parent)
+	corner(b, 6)
+	local holder = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, b)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, holder)
+	local ic = newIcon(holder, icon, filled, 16, C.text)
+	ic.LayoutOrder = 1
+	local lbl
+	if text ~= "" then
+		lbl = new("TextLabel", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = text,
+			TextColor3 = C.text,
+			TextSize = textSize or 14,
+			FontFace = sans(),
+			LayoutOrder = 2,
+		}, holder)
+	end
+	b.MouseEnter:Connect(function()
+		b.BackgroundTransparency = 0.05
+	end)
+	b.MouseLeave:Connect(function()
+		b.BackgroundTransparency = 0.3
+	end)
+	return b, ic, lbl
+end
+
+UI = {}
+UI.assets = { logo = "rbxassetid://132430598780696" }
+
+UI.brand = { default = "Bases Menu", max = 30, targets = {} }
+
+function UI.brand.normalize(raw)
+	local text = tostring(raw or ""):gsub("%c", " "):gsub("%s+", " "):match("^%s*(.-)%s*$")
+	if text == "" then
+		return UI.brand.default
+	end
+	local ok, length = pcall(utf8.len, text)
+	if ok and length then
+		if length > UI.brand.max then
+			text = text:sub(1, utf8.offset(text, UI.brand.max + 1) - 1)
+		end
+	elseif #text > UI.brand.max then
+		text = text:sub(1, UI.brand.max)
+	end
+	return text
+end
+
+UI.brand.name = UI.brand.normalize(settings.brandName)
+
+function UI.brand.bind(obj, fmt)
+	fmt = fmt or tostring
+	UI.brand.targets[#UI.brand.targets + 1] = { obj = obj, fmt = fmt }
+	obj.Text = fmt(UI.brand.name)
+end
+
+function UI.brand.apply(name)
+	UI.brand.name = UI.brand.normalize(name)
+	local alive = {}
+	for _, target in ipairs(UI.brand.targets) do
+		if target.obj.Parent ~= nil then
+			target.obj.Text = target.fmt(UI.brand.name)
+			alive[#alive + 1] = target
+		end
+	end
+	UI.brand.targets = alive
+end
+
+bind("brandName", function(value)
+	UI.brand.apply(value)
+end, true)
+
+
+UI.basesScreen = new("ScreenGui", {
+	Name = "WindowHost:bases_menu",
+	ResetOnSpawn = false,
+	DisplayOrder = 100,
+}, coreGui)
+
+accentTargets = {}
+end)()
+local accentize, goToPage, execute, runFind, pruneAccent, applyAccentTargets, notify, runSource, sectionHeader, inputBox, ov, PAD_L, PAD_T, matchPool, themes, HL, normalize, sanitize, scriptData, activeTabIndex, scriptPath, uniqueName, scriptsLoaded, welcomeSource, loadSavedScripts, saveDirty, charW, lineH, canvasW, canvasH, lineCount, maxCols, shownLines, lastText, lastLn, lastCol, IND, findOpen, syncGutter, relayout, applyFont, cursorLineCol, ensureVisible, updateCursorUI, refreshEditor, currentData, histOf, commitEdit, undo, redo, toggleComment, matches, matchIdx, caseSensitive, hideMatchFrames
+;(function()
+function accentize(obj, prop)
+	prop = prop or "BackgroundColor3"
+	table.insert(accentTargets, { obj = obj, prop = prop })
+	obj[prop] = accent()
+end
+function pruneAccent()
+	for i = #accentTargets, 1, -1 do
+		if not accentTargets[i].obj:IsDescendantOf(UI.basesScreen) then
+			table.remove(accentTargets, i)
+		end
+	end
+end
+function applyAccentTargets()
+	pruneAccent()
+	for _, t in ipairs(accentTargets) do
+		t.obj[t.prop] = accent()
+	end
+end
+
+UI.windowFrame = new("Frame", {
+	Name = "WindowFrame",
+	Size = UDim2.new(0, 844, 0, 600),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	BackgroundTransparency = 1,
+	ClipsDescendants = false,
+}, UI.basesScreen)
+UI.WINDOW_DEFAULT_POS = UI.windowFrame.Position
+UI.scaleValue = 1
+UI.scaleObj = new("UIScale", { Scale = 1 }, UI.windowFrame)
+function UI.applyScale()
+	local want = math.clamp(tonumber(settings.uiScale) or 1, 0.5, 1.5)
+	local fit = want
+	local cam = workspace.CurrentCamera
+	if cam then
+		local vp = cam.ViewportSize
+		if type(vp.X) == "number" and type(vp.Y) == "number" and vp.X > 0 and vp.Y > 0 then
+			fit = math.min(want, math.max(0.4, (vp.X - 16) / 844), math.max(0.4, (vp.Y - 52) / 600))
+		end
+	end
+	UI.scaleValue = fit
+	UI.scaleObj.Scale = fit
+end
+UI.applyScale()
+
+UI.content = new("Frame", {
+	Name = "Content",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundColor3 = Color3.new(0.07, 0.07, 0.082),
+	BackgroundTransparency = settings.opacity,
+	ClipsDescendants = true,
+	Visible = false,
+}, UI.windowFrame)
+corner(UI.content, 8)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder }, UI.content)
+
+function notify(msg, kind)
+	kind = kind or "info"
+	if kind == "success" and settings.hideNotifs then
+		return
+	end
+	msg = tostring(msg)
+	if #msg > 200 then
+		msg = msg:sub(1, 200) .. "..."
+	end
+	local titles = { error = "Error", warn = "Warning", success = "Success" }
+	task.spawn(function()
+		for _ = 1, 6 do
+			local ok = pcall(function()
+				starterGui:SetCore("SendNotification", {
+					Title = titles[kind] or UI.brand.name,
+					Text = msg,
+					Duration = settings.notifyDuration,
+				})
+			end)
+			if ok then
+				return
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+UI.run = { last = nil }
+
+function runSource(src, label)
+	if not src or src:match("^%s*$") then
+		notify("Nothing to execute", "warn")
+		return
+	end
+	local clicked = os.clock()
+	task.spawn(function()
+		local started = os.clock()
+		local name = tostring(label or "script")
+		local fn, err = loadstring(src, "=" .. name)
+		local compiled = os.clock()
+		local stat = { label = name, size = #src, queued = started - clicked, compile = compiled - started }
+		UI.run.last = stat
+		if not fn then
+			notify("Syntax error: " .. tostring(err), "error")
+			if UI.history then
+				UI.history.add(label, src, false, err)
+			end
+			return
+		end
+		local entry
+		local function record(good, why)
+			if not UI.history then
+				return
+			end
+			if entry then
+				if not good then
+					UI.history.fail(entry, why)
+				end
+			else
+				entry = UI.history.add(label, src, good, why)
+			end
+		end
+		local failed = false
+		task.defer(function()
+			if failed then
+				return
+			end
+			record(true)
+			if stat.compile > 0.25 then
+				notify(string.format("Executed %s (compiling took %d ms)", name, math.floor(stat.compile * 1000)), "success")
+			else
+				notify("Executed " .. name, "success")
+			end
+		end)
+		local ok, runErr = pcall(fn)
+		stat.run = os.clock() - compiled
+		if not ok then
+			failed = true
+			record(false, runErr)
+			notify("Runtime error: " .. tostring(runErr), "error")
+		end
+	end)
+end
+
+UI.topBar = new("Frame", { Name = "TopBar", Size = UDim2.new(1, 0, 0, 64), BackgroundTransparency = 1, LayoutOrder = 1 }, UI.content)
+UI.leading = new("Frame", { Name = "Leading", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, UI.topBar)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Padding = UDim.new(0, 16),
+}, UI.leading)
+padding(UI.leading, 0, 0, 0, 16)
+
+UI.closeButton = new("ImageButton", {
+	Name = "CloseButton",
+	Size = UDim2.new(0, 40, 0, 40),
+	BackgroundColor3 = Color3.new(0.815, 0.85, 0.984),
+	BackgroundTransparency = 1,
+	AutoButtonColor = false,
+}, UI.leading)
+corner(UI.closeButton, 8)
+new("TextLabel", {
+	Name = "Icon",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "x",
+	TextColor3 = C.text,
+	TextSize = 24,
+	FontFace = ICON_FONT,
+}, UI.closeButton)
+
+UI.titleBox = new("TextBox", {
+	Name = "Title",
+	AutomaticSize = Enum.AutomaticSize.X,
+	Size = UDim2.new(0, 0, 1, 0),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 1,
+	Text = UI.brand.name,
+	PlaceholderText = UI.brand.default,
+	ClearTextOnFocus = false,
+	TextColor3 = C.text,
+	TextSize = 20,
+	FontFace = sans(),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.leading)
+corner(UI.titleBox, 6)
+padding(UI.titleBox, 0, 4, 0, 4)
+new("UISizeConstraint", { MinSize = Vector2.new(60, 0) }, UI.titleBox)
+UI.brand.bind(UI.titleBox, tostring)
+
+function UI.brand.commit(raw)
+	local name = UI.brand.normalize(raw)
+	UI.titleBox.Text = name
+	if name == UI.brand.name and settings.brandName == name then
+		return
+	end
+	setSetting("brandName", name)
+	UI.titleBox.Text = UI.brand.name
+	if name == UI.brand.default then
+		notify("Menu name reset", "success")
+	else
+		notify("Menu name set to " .. name, "success")
+	end
+end
+
+UI.titleBox.Focused:Connect(function()
+	UI.titleBox.BackgroundTransparency = 0.88
+end)
+UI.titleBox.FocusLost:Connect(function(_, input)
+	UI.titleBox.BackgroundTransparency = 1
+	if input and input.KeyCode == Enum.KeyCode.Escape then
+		UI.titleBox.Text = UI.brand.name
+		return
+	end
+	UI.brand.commit(UI.titleBox.Text)
+end)
+UI.titleBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local text = UI.titleBox.Text
+	if type(text) == "string" and #text > UI.brand.max * 4 then
+		UI.titleBox.Text = text:sub(1, UI.brand.max * 4)
+	end
+end)
+
+UI.trailing = new("Frame", {
+	Name = "Trailing",
+	Size = UDim2.new(0, 120, 1, 0),
+	Position = UDim2.new(1, -120, 0, 0),
+	BackgroundTransparency = 1,
+}, UI.topBar)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Padding = UDim.new(0, 8),
+}, UI.trailing)
+padding(UI.trailing, 0, 16, 0, 0)
+
+local function iconTopButton(name, icon)
+	return new("TextButton", {
+		Name = name,
+		Size = UDim2.new(0, 40, 0, 40),
+		BackgroundTransparency = 1,
+		Text = icon,
+		TextColor3 = C.text,
+		TextSize = 24,
+		FontFace = ICON_FONT,
+	}, UI.trailing)
+end
+UI.dotsBtn = iconTopButton("Dots", "three-dots-horizontal")
+UI.searchTopBtn = iconTopButton("Search", "magnifying-glass")
+
+UI.tabsContainer = new("Frame", { Name = "TabsContainer", Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, LayoutOrder = 2 }, UI.content)
+UI.tabScroll = new("ScrollingFrame", {
+	Name = "ScrollingFrame",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	ScrollBarThickness = 0,
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+}, UI.tabsContainer)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder }, UI.tabScroll)
+padding(UI.tabScroll, 0, 24, 48, 24)
+
+new("Frame", {
+	Name = "BottomBorder",
+	Size = UDim2.new(1, 0, 0, 1),
+	Position = UDim2.new(0, 0, 1, 0),
+	AnchorPoint = Vector2.new(0, 1),
+	BackgroundColor3 = Color3.new(0.815, 0.85, 0.984),
+	BackgroundTransparency = 0.88,
+	BorderSizePixel = 0,
+}, UI.tabsContainer)
+UI.animatedBorder = new("Frame", {
+	Name = "AnimatedBorder",
+	Size = UDim2.new(0, 0, 0, 2),
+	Position = UDim2.new(0, 0, 1, 0),
+	AnchorPoint = Vector2.new(0, 1),
+	BackgroundColor3 = C.text,
+	BorderSizePixel = 0,
+}, UI.tabsContainer)
+
+UI.pageContainer = new("Frame", {
+	Name = "PageContainer",
+	Size = UDim2.new(1, 0, 1, -112),
+	BackgroundTransparency = 1,
+	LayoutOrder = 3,
+}, UI.content)
+
+UI.executorPage = new("ScrollingFrame", {
+	Name = "ExecutorPage",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	Visible = true,
+}, UI.pageContainer)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 16) }, UI.executorPage)
+padding(UI.executorPage, 16, 24, 24, 24)
+
+function sectionHeader(text, parent, order)
+	local header = new("Frame", { Size = UDim2.new(1, 0, 0, 24), BackgroundTransparency = 1, LayoutOrder = order }, parent)
+	new("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = text .. " <font color='rgb(213, 215, 221)'><font family='" .. ICON_PATH .. "'>chevron-large-right</font></font>",
+		TextColor3 = C.text,
+		TextSize = 18,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, header)
+	return header
+end
+sectionHeader("Executor", UI.executorPage, 0)
+
+UI.scriptTabsContainer = new("Frame", { Name = "ScriptTabsContainer", Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1, LayoutOrder = 1 }, UI.executorPage)
+UI.scriptTabScroll = new("ScrollingFrame", {
+	Size = UDim2.new(1, -148, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+}, UI.scriptTabsContainer)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, UI.scriptTabScroll)
+
+local function squareIconButton(icon, size, x, parent)
+	local b = new("TextButton", {
+		Size = UDim2.new(0, 32, 0, 32),
+		Position = x,
+		BackgroundTransparency = 0.6,
+		BackgroundColor3 = C.card,
+		Text = icon,
+		TextColor3 = C.text,
+		TextSize = size,
+		FontFace = Font.new(ICON_PATH),
+	}, parent)
+	corner(b, 6)
+	return b
+end
+UI.delTabBtn = squareIconButton("trash-can", 18, UDim2.new(1, -68, 0, 0), UI.scriptTabsContainer)
+UI.addTabBtn = squareIconButton("plus-small", 22, UDim2.new(1, -32, 0, 0), UI.scriptTabsContainer)
+UI.moveLeftBtn = squareIconButton("chevron-small-left", 20, UDim2.new(1, -140, 0, 0), UI.scriptTabsContainer)
+UI.moveRightBtn = squareIconButton("chevron-small-right", 20, UDim2.new(1, -104, 0, 0), UI.scriptTabsContainer)
+UI.scriptTabScroll.Size = UDim2.new(1, -220, 1, 0)
+UI.scriptTabScroll.ScrollBarThickness = 0
+UI.tabScrollLeftBtn = squareIconButton("double-chevron-large-left", 16, UDim2.new(1, -212, 0, 0), UI.scriptTabsContainer)
+UI.tabScrollRightBtn = squareIconButton("double-chevron-large-right", 16, UDim2.new(1, -176, 0, 0), UI.scriptTabsContainer)
+
+local function smallBtn(text, w, parent, h)
+	local b = new("TextButton", {
+		Size = UDim2.new(0, w, 0, h or 30),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.3,
+		AutoButtonColor = false,
+		Text = text,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+	}, parent)
+	corner(b, 6)
+	b.MouseEnter:Connect(function()
+		b.BackgroundTransparency = 0.05
+	end)
+	b.MouseLeave:Connect(function()
+		b.BackgroundTransparency = 0.3
+	end)
+	return b
+end
+function inputBox(placeholder, parent)
+	local b = new("TextBox", {
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.3,
+		Text = "",
+		PlaceholderText = placeholder,
+		PlaceholderColor3 = C.sub,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		ClipsDescendants = true,
+	}, parent)
+	corner(b, 6)
+	padding(b, 0, 8, 0, 8)
+	return b
+end
+
+UI.overlay = new("Frame", {
+	Name = "Overlay",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Visible = false,
+	ZIndex = 100,
+}, UI.pageContainer)
+
+UI.anim = { ready = false, closing = false, list = {}, driver = nil, rest = nil }
+function UI.anim.enabled()
+	return UI.anim.ready and settings.smoothAnim == true
+end
+function UI.anim.drive(dt)
+	local list = UI.anim.list
+	if #list == 0 then
+		return
+	end
+	dt = math.min(dt, 0.05)
+	local steps = math.max(1, math.ceil(dt / 0.008))
+	local h = dt / steps
+	local i = 1
+	while i <= #list do
+		local s = list[i]
+		local x, v, target, w, z = s.x, s.v, s.target, s.omega, s.zeta
+		for _ = 1, steps do
+			v = v + (w * w * (target - x) - 2 * z * w * v) * h
+			x = x + v * h
+		end
+		if math.abs(target - x) < s.eps and math.abs(v) < s.eps * 10 then
+			s.x, s.v, s.active = target, 0, false
+			list[i] = list[#list]
+			list[#list] = nil
+			pcall(s.apply, target, 0)
+			local done = s.done
+			s.done = nil
+			if done then
+				pcall(done)
+			end
+		else
+			s.x, s.v = x, v
+			pcall(s.apply, x, v)
+			i = i + 1
+		end
+	end
+end
+function UI.anim.spring(initial, apply, freq, damping, eps)
+	local s = { x = initial, v = 0, target = initial, omega = freq or 36, zeta = damping or 0.9, eps = eps or 0.004, apply = apply, active = false, done = nil }
+	local function leave()
+		if s.active then
+			s.active = false
+			local list = UI.anim.list
+			for i = 1, #list do
+				if list[i] == s then
+					list[i] = list[#list]
+					list[#list] = nil
+					break
+				end
+			end
+		end
+	end
+	function s.cancel(value)
+		leave()
+		s.done = nil
+		if value ~= nil then
+			s.x = value
+		end
+		s.v, s.target = 0, s.x
+	end
+	function s.snap(value)
+		s.cancel(value)
+		pcall(s.apply, s.x, 0)
+	end
+	function s.to(target, done)
+		if not UI.anim.enabled() then
+			s.snap(target)
+			if done then
+				pcall(done)
+			end
+			return
+		end
+		s.target = target
+		s.done = done
+		if not s.active then
+			s.active = true
+			UI.anim.list[#UI.anim.list + 1] = s
+		end
+		if not UI.anim.driver and running then
+			UI.anim.driver = track(runService.Heartbeat:Connect(UI.anim.drive))
+		end
+	end
+	return s
+end
+
+ov = { layer = nil, input = nil, parts = nil, dying = nil, dyingSpring = nil }
+
+local function zAll(root, z)
+	root.ZIndex = z
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			d.ZIndex = z + 1
+		end
+	end
+end
+
+function ov.close(instant)
+	if ov.input then
+		ov.input:Disconnect()
+		ov.input = nil
+	end
+	if ov.dying then
+		if ov.dyingSpring then
+			ov.dyingSpring.cancel()
+			ov.dyingSpring = nil
+		end
+		pcall(function()
+			ov.dying:Destroy()
+		end)
+		ov.dying = nil
+	end
+	local layer = ov.layer
+	local parts = ov.parts
+	ov.layer = nil
+	ov.parts = nil
+	if layer and not instant and UI.anim.enabled() and parts and parts.spring then
+		ov.dying = layer
+		ov.dyingSpring = parts.spring
+		parts.spring.to(parts.out, function()
+			if ov.dying == layer then
+				ov.dying, ov.dyingSpring = nil, nil
+				pcall(function()
+					layer:Destroy()
+				end)
+				if not ov.layer then
+					UI.overlay.Visible = false
+				end
+			end
+		end)
+		return
+	end
+	if layer then
+		layer:Destroy()
+	end
+	UI.overlay.Visible = false
+end
+
+function ov.modal(opts)
+	ov.close(true)
+	local fields = opts.fields or {}
+	local width = opts.width or 420
+	local descHeight = opts.descHeight or (opts.desc and 44 or 0)
+	local height = 18 + 26 + descHeight + #fields * 46 + 26 + 10 + 36 + 18
+	local layer = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 100 }, UI.overlay)
+	local dim = new("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 101,
+	}, layer)
+	local box = new("Frame", {
+		Size = UDim2.fromOffset(width, height),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		BackgroundColor3 = Color3.new(0.1, 0.1, 0.12),
+		BorderSizePixel = 0,
+	}, layer)
+	corner(box, 12)
+	new("TextLabel", {
+		Position = UDim2.new(0, 20, 0, 18),
+		Size = UDim2.new(1, -40, 0, 26),
+		BackgroundTransparency = 1,
+		Text = opts.title or "",
+		TextColor3 = C.text,
+		TextSize = 18,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, box)
+	if opts.desc then
+		new("TextLabel", {
+			Position = UDim2.new(0, 20, 0, 46),
+			Size = UDim2.new(1, -40, 0, descHeight - 4),
+			BackgroundTransparency = 1,
+			Text = opts.desc,
+			RichText = opts.descRich == true,
+			TextColor3 = C.sub,
+			TextSize = 13,
+			FontFace = sans(Enum.FontWeight.Medium),
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+		}, box)
+	end
+	local inputs = {}
+	for i, f in ipairs(fields) do
+		local tb = inputBox(f.placeholder or "", box)
+		tb.Position = UDim2.new(0, 20, 0, 48 + descHeight + (i - 1) * 46)
+		tb.Size = UDim2.new(1, -40, 0, 36)
+		tb.Text = f.text or ""
+		inputs[i] = tb
+	end
+	local status = new("TextLabel", {
+		Position = UDim2.new(0, 20, 0, 48 + descHeight + #fields * 46),
+		Size = UDim2.new(1, -40, 0, 22),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, box)
+	local okBtn = iconBtn(opts.okText or "Enter", { opts.okIcon or "check" }, 124, box, 36, true)
+	okBtn.Position = UDim2.new(1, -144, 1, -54)
+	okBtn.BackgroundTransparency = 0.1
+	if opts.danger then
+		okBtn.BackgroundColor3 = C.red
+	else
+		accentize(okBtn)
+	end
+	local cancelBtn = iconBtn(opts.cancelText or "Cancel", { "x" }, 110, box, 36, false)
+	cancelBtn.Position = UDim2.new(1, -262, 1, -54)
+	local extraBtn
+	if opts.extraText then
+		extraBtn = iconBtn(opts.extraText, { opts.extraIcon or "arrow-rotate-right" }, 112, box, 36, false)
+		extraBtn.Position = UDim2.new(0, 18, 1, -54)
+	end
+
+	local busy = false
+	local api = {}
+	function api.status(text, color)
+		status.Text = text or ""
+		status.TextColor3 = color or C.sub
+	end
+	local progressBar = new("Frame", { Position = UDim2.new(0, 20, 0, 48 + descHeight + #fields * 46 + 22), Size = UDim2.new(1, -40, 0, 3), BackgroundColor3 = C.dim, BorderSizePixel = 0, Visible = false }, box)
+	corner(progressBar, 2)
+	local progressFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0 }, progressBar)
+	corner(progressFill, 2)
+	accentize(progressFill)
+	function api.progress(frac)
+		progressBar.Visible = frac ~= nil
+		if frac then
+			progressFill.Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0)
+		end
+	end
+	function api.isOpen()
+		return ov.layer == layer
+	end
+	function api.close()
+		if ov.layer == layer then
+			ov.close()
+		end
+	end
+	function api.busy(b)
+		busy = b
+		okBtn.BackgroundTransparency = b and 0.6 or 0.1
+	end
+	if extraBtn then
+		extraBtn.MouseButton1Click:Connect(function()
+			if not busy and opts.onExtra then
+				local ok, err = pcall(opts.onExtra, api)
+				if not ok then
+					api.status(tostring(err), C.red)
+				end
+			end
+		end)
+	end
+	local function submit()
+		if busy then
+			return
+		end
+		local vals = {}
+		for i, f in ipairs(fields) do
+			vals[f.key or i] = inputs[i].Text
+		end
+		if not opts.onSubmit then
+			ov.close()
+			return
+		end
+		local ok, res = pcall(opts.onSubmit, vals, api)
+		if not ok then
+			api.status(tostring(res), C.red)
+		elseif res == true then
+			ov.close()
+		end
+	end
+	okBtn.MouseButton1Click:Connect(submit)
+	cancelBtn.MouseButton1Click:Connect(function()
+		if opts.onCancel then
+			pcall(opts.onCancel)
+		end
+		ov.close()
+	end)
+	for i, tb in ipairs(inputs) do
+		tb.FocusLost:Connect(function(enter)
+			if enter then
+				if i < #inputs then
+					inputs[i + 1]:CaptureFocus()
+				else
+					submit()
+				end
+			end
+		end)
+	end
+	dim.MouseButton1Click:Connect(function() end)
+
+	zAll(box, 102)
+	ov.layer = layer
+	ov.parts = nil
+	UI.overlay.Visible = true
+	if UI.anim.enabled() then
+		local slide = UI.anim.spring(24, function(off)
+			box.Position = UDim2.new(0.5, 0, 0.5, off)
+		end, 34, 0.8, 0.3)
+		ov.parts = { spring = slide, out = 14 }
+		slide.snap(24)
+		slide.to(0)
+	end
+	if inputs[1] then
+		task.defer(function()
+			if inputs[1].Parent then
+				inputs[1]:CaptureFocus()
+			end
+		end)
+	end
+	return api
+end
+
+function ov.panel(width, height)
+	ov.close(true)
+	local scale = UI.scaleValue or 1
+	pcall(function()
+		local size = UI.overlay.AbsoluteSize / scale
+		if type(size.X) == "number" and size.X > 100 and type(size.Y) == "number" and size.Y > 100 then
+			width = math.min(width, size.X - 24)
+			height = math.min(height, size.Y - 24)
+		end
+	end)
+	local layer = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 100 }, UI.overlay)
+	local dim = new("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 101,
+	}, layer)
+	local box = new("Frame", {
+		Size = UDim2.fromOffset(width, height),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		BackgroundColor3 = Color3.new(0.1, 0.1, 0.12),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, layer)
+	corner(box, 12)
+	local api = { box = box, layer = layer, width = width, height = height }
+	function api.isOpen()
+		return ov.layer == layer
+	end
+	function api.close()
+		if ov.layer == layer then
+			ov.close()
+		end
+	end
+	function api.show()
+		zAll(box, 102)
+		ov.layer = layer
+		ov.parts = nil
+		UI.overlay.Visible = true
+		if UI.anim.enabled() then
+			local slide = UI.anim.spring(24, function(off)
+				box.Position = UDim2.new(0.5, 0, 0.5, off)
+			end, 34, 0.8, 0.3)
+			ov.parts = { spring = slide, out = 14 }
+			slide.snap(24)
+			slide.to(0)
+		end
+	end
+	dim.MouseButton1Click:Connect(api.close)
+	return api
+end
+
+function ov.dropdown(anchor, options, current, onPick, opts)
+	opts = opts or {}
+	ov.close(true)
+	if #options == 0 then
+		return
+	end
+	local rowH = 34
+	local searchable = opts.search ~= false and #options > 8
+	local searchH = searchable and 44 or 0
+	local scale = UI.scaleValue or 1
+	local ovSize = UI.overlay.AbsoluteSize / scale
+	local listH = math.min(#options * (rowH + 2) + 10, opts.maxHeight or 264)
+	local totalH = math.min(listH + searchH, math.max(80, ovSize.Y - 16))
+	listH = totalH - searchH
+	local width = math.max(anchor.AbsoluteSize.X / scale, opts.minWidth or 190)
+	local origin = UI.overlay.AbsolutePosition
+	local ax = (anchor.AbsolutePosition.X - origin.X) / scale
+	local ay = (anchor.AbsolutePosition.Y - origin.Y) / scale
+	local x = math.clamp(ax, 8, math.max(8, ovSize.X - width - 8))
+	local y = ay + anchor.AbsoluteSize.Y / scale + 4
+	if y + totalH > ovSize.Y - 8 then
+		y = ay - totalH - 4
+	end
+	y = math.clamp(y, 8, math.max(8, ovSize.Y - totalH - 8))
+
+	local layer = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 100 }, UI.overlay)
+	local dim = new("TextButton", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 101,
+	}, layer)
+	dim.MouseButton1Click:Connect(ov.close)
+	local pop = new("Frame", {
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(width, totalH),
+		BackgroundColor3 = Color3.new(0.1, 0.1, 0.12),
+		BorderSizePixel = 0,
+	}, layer)
+	corner(pop, 10)
+	local search
+	if searchable then
+		search = inputBox("Search...", pop)
+		search.Position = UDim2.new(0, 8, 0, 8)
+		search.Size = UDim2.new(1, -16, 0, 30)
+	end
+	local list = new("ScrollingFrame", {
+		Position = UDim2.new(0, 0, 0, searchH),
+		Size = UDim2.new(1, 0, 0, listH),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, pop)
+	padding(list, 5, 6, 5, 6)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, list)
+
+	local function build(filter)
+		for _, c in ipairs(list:GetChildren()) do
+			if c:IsA("TextButton") then
+				c:Destroy()
+			end
+		end
+		local selIndex = 0
+		local shown = 0
+		for _, o in ipairs(options) do
+			if filter == "" or tostring(o.label):lower():find(filter, 1, true) then
+				shown += 1
+				local sel = o.value == current
+				if sel then
+					selIndex = shown
+				end
+				local row = new("TextButton", {
+					Size = UDim2.new(1, 0, 0, rowH),
+					BackgroundColor3 = accent(),
+					BackgroundTransparency = sel and 0.55 or 1,
+					AutoButtonColor = false,
+					Text = "",
+					LayoutOrder = shown,
+				}, list)
+				corner(row, 7)
+				local textX = 12
+				if o.icon then
+					local ic = newIcon(row, { o.icon }, sel, 16, sel and C.text or C.sub)
+					ic.Position = UDim2.new(0, 10, 0.5, -10)
+					textX = 36
+				end
+				new("TextLabel", {
+					Position = UDim2.new(0, textX, 0, 0),
+					Size = UDim2.new(1, -(textX + (o.desc and 90 or 34)), 1, 0),
+					BackgroundTransparency = 1,
+					Text = tostring(o.label),
+					TextColor3 = C.text,
+					TextSize = 14,
+					FontFace = sans(sel and Enum.FontWeight.Bold or Enum.FontWeight.Medium),
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextTruncate = Enum.TextTruncate.AtEnd,
+				}, row)
+				if o.desc then
+					new("TextLabel", {
+						Position = UDim2.new(1, -92, 0, 0),
+						Size = UDim2.new(0, 56, 1, 0),
+						BackgroundTransparency = 1,
+						Text = tostring(o.desc),
+						TextColor3 = C.sub,
+						TextSize = 12,
+						FontFace = sans(Enum.FontWeight.Medium),
+						TextXAlignment = Enum.TextXAlignment.Right,
+					}, row)
+				end
+				if sel then
+					local ck = newIcon(row, { "check" }, true, 16, C.text)
+					ck.Position = UDim2.new(1, -28, 0.5, -10)
+				end
+				row.MouseEnter:Connect(function()
+					if not sel then
+						row.BackgroundTransparency = 0.8
+					end
+				end)
+				row.MouseLeave:Connect(function()
+					if not sel then
+						row.BackgroundTransparency = 1
+					end
+				end)
+				row.MouseButton1Click:Connect(function()
+					ov.close()
+					onPick(o.value, o)
+				end)
+			end
+		end
+		zAll(list, 102)
+		task.defer(function()
+			if list.Parent and filter == "" and selIndex > 2 then
+				list.CanvasPosition = Vector2.new(0, (selIndex - 2) * (rowH + 2))
+			end
+		end)
+	end
+	build("")
+	if search then
+		search:GetPropertyChangedSignal("Text"):Connect(function()
+			build(search.Text:lower())
+		end)
+	end
+	zAll(pop, 102)
+	ov.layer = layer
+	ov.parts = nil
+	UI.overlay.Visible = true
+	if UI.anim.enabled() then
+		pop.ClipsDescendants = true
+		local grow = UI.anim.spring(0, function(h)
+			pop.Size = UDim2.fromOffset(width, math.max(0, h))
+		end, 40, 1, 0.3)
+		ov.parts = { spring = grow, out = 0 }
+		grow.snap(0)
+		grow.to(totalH)
+	end
+end
+
+UI.findBar = new("Frame", { Name = "FindBar", Size = UDim2.new(1, 0, 0, 68), BackgroundTransparency = 1, LayoutOrder = 2, Visible = false }, UI.executorPage)
+UI.findBox = inputBox("Find...", UI.findBar)
+UI.findBox.Size = UDim2.new(1, -274, 0, 30)
+UI.replaceBox = inputBox("Replace with...", UI.findBar)
+UI.replaceBox.Size = UDim2.new(1, -274, 0, 30)
+UI.replaceBox.Position = UDim2.new(0, 0, 0, 38)
+
+UI.findRight = new("Frame", { Size = UDim2.new(0, 266, 0, 30), Position = UDim2.new(1, -266, 0, 0), BackgroundTransparency = 1 }, UI.findBar)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, UI.findRight)
+UI.countLabel = new("TextLabel", { Size = UDim2.new(0, 64, 0, 30), BackgroundTransparency = 1, Text = "", TextColor3 = C.sub, TextSize = 14, FontFace = sans(), LayoutOrder = 1 }, UI.findRight)
+UI.caseBtn = smallBtn("Aa", 36, UI.findRight)
+UI.caseBtn.LayoutOrder = 2
+UI.prevBtn = iconBtn("", { "chevron-small-up" }, 34, UI.findRight, 30, false)
+UI.prevBtn.LayoutOrder = 3
+UI.nextBtn = iconBtn("", { "chevron-small-down" }, 34, UI.findRight, 30, false)
+UI.nextBtn.LayoutOrder = 4
+UI.findCloseBtn = iconBtn("", { "x" }, 34, UI.findRight, 30, false)
+UI.findCloseBtn.LayoutOrder = 5
+
+UI.replaceRight = new("Frame", { Size = UDim2.new(0, 266, 0, 30), Position = UDim2.new(1, -266, 0, 38), BackgroundTransparency = 1 }, UI.findBar)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Right, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, UI.replaceRight)
+UI.replaceBtn = iconBtn("Replace", { "two-arrows-left-right" }, 100, UI.replaceRight, 30, false)
+UI.replaceBtn.LayoutOrder = 1
+UI.replaceAllBtn = iconBtn("Replace All", { "two-arrows-loop-clockwise" }, 124, UI.replaceRight, 30, true)
+UI.replaceAllBtn.LayoutOrder = 2
+
+local EDITOR_H = 260
+PAD_L, PAD_T = 8, 8
+
+UI.editorHolder = new("Frame", {
+	Name = "EditorHolder",
+	Size = UDim2.new(1, 0, 0, settings.editorHeight),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	ClipsDescendants = true,
+	LayoutOrder = 3,
+}, UI.executorPage)
+corner(UI.editorHolder, 8)
+
+UI.gutter = new("Frame", {
+	Name = "Gutter",
+	Size = UDim2.new(0, 40, 1, 0),
+	BackgroundColor3 = Color3.new(0.05, 0.05, 0.065),
+	BackgroundTransparency = 0.5,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, UI.editorHolder)
+UI.lineNumbers = new("TextLabel", {
+	Name = "LineNumbers",
+	BackgroundTransparency = 1,
+	Text = "1",
+	TextColor3 = Color3.new(0.4, 0.4, 0.45),
+	TextSize = settings.fontSize,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Size = UDim2.new(1, -10, 0, 20),
+	Position = UDim2.new(0, 0, 0, PAD_T),
+}, UI.gutter)
+
+UI.editorScroll = new("ScrollingFrame", {
+	Name = "EditorScroll",
+	Position = UDim2.new(0, 40, 0, 0),
+	Size = UDim2.new(1, -40, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 6,
+	ScrollBarImageColor3 = Color3.new(0.5, 0.5, 0.55),
+	ScrollingDirection = Enum.ScrollingDirection.XY,
+	AutomaticCanvasSize = Enum.AutomaticSize.None,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	Active = true,
+}, UI.editorHolder)
+
+UI.curLine = new("Frame", {
+	Name = "CurrentLine",
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BackgroundTransparency = 0.95,
+	BorderSizePixel = 0,
+	ZIndex = 1,
+}, UI.editorScroll)
+
+matchPool = {}
+
+UI.activeNum = new("TextLabel", {
+	Name = "ActiveLineNumber",
+	BackgroundTransparency = 1,
+	Text = "1",
+	TextColor3 = C.text,
+	TextSize = settings.fontSize,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Size = UDim2.new(1, -10, 0, 20),
+	Position = UDim2.new(0, 0, 0, PAD_T),
+	ZIndex = 2,
+}, UI.gutter)
+UI.errGutter, UI.errLines, UI.brFrames = {}, {}, {}
+for i = 1, 2 do
+	UI.errGutter[i] = new("Frame", {
+		Name = "ErrorGutterMark",
+		BackgroundColor3 = C.red,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(3, 18),
+		Visible = false,
+		ZIndex = 3,
+	}, UI.gutter)
+	UI.errLines[i] = new("Frame", {
+		Name = "ErrorUnderline",
+		BackgroundColor3 = C.red,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(10, 2),
+		Visible = false,
+		ZIndex = 1,
+	}, UI.editorScroll)
+	UI.brFrames[i] = new("Frame", {
+		Name = "BracketMark",
+		BackgroundColor3 = accent(),
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(8, 18),
+		Visible = false,
+		ZIndex = 1,
+	}, UI.editorScroll)
+	corner(UI.brFrames[i], 3)
+end
+UI.caret = new("Frame", {
+	Name = "TextCaret",
+	BackgroundColor3 = C.text,
+	BorderSizePixel = 0,
+	Size = UDim2.fromOffset(2, 18),
+	Visible = false,
+	ZIndex = 4,
+}, UI.editorScroll)
+
+UI.highlighter = new("TextLabel", {
+	Name = "Highlighter",
+	Position = UDim2.new(0, PAD_L, 0, PAD_T),
+	BackgroundTransparency = 1,
+	Text = "",
+	RichText = true,
+	TextColor3 = Color3.new(0.9, 0.9, 0.9),
+	TextSize = settings.fontSize,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextWrapped = false,
+	ZIndex = 2,
+}, UI.editorScroll)
+
+UI.editorBox = new("TextBox", {
+	Name = "EditorBox",
+	Position = UDim2.new(0, PAD_L, 0, PAD_T),
+	BackgroundTransparency = 1,
+	TextTransparency = 1,
+	PlaceholderText = "",
+	Text = "",
+	TextColor3 = Color3.new(0.9, 0.9, 0.9),
+	TextSize = settings.fontSize,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	ClearTextOnFocus = false,
+	TextWrapped = false,
+	MultiLine = true,
+	ZIndex = 3,
+}, UI.editorScroll)
+
+UI.hint = {}
+UI.hint.label = new("TextLabel", {
+	Name = "EmptyHint",
+	Position = UDim2.new(0, PAD_L, 0, PAD_T),
+	AutomaticSize = Enum.AutomaticSize.XY,
+	Size = UDim2.new(0, 0, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = Color3.new(0.4, 0.4, 0.45),
+	TextSize = settings.fontSize,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextWrapped = false,
+	Visible = false,
+	Active = false,
+	ZIndex = 2,
+}, UI.editorScroll)
+
+function UI.hint.lines()
+	if UI.editorBox.TextEditable == false then
+		return { "-- Loading your scripts..." }
+	end
+	return {
+		"-- Write or paste your script here.",
+		"-- Press " .. tostring(settings.execKey) .. " or click Execute to run it.",
+		"-- Ctrl+F finds text, Ctrl+S saves, Ctrl+/ comments a line.",
+		"-- Load one from Script Hub, or use Snippets and Recent below.",
+	}
+end
+
+function UI.hint.update()
+	local label = UI.hint.label
+	local empty = UI.editorBox.Text == ""
+	label.Visible = empty
+	if empty then
+		label.Text = table.concat(UI.hint.lines(), "\n")
+		label.TextSize = settings.fontSize
+	end
+end
+
+UI.editorBox:GetPropertyChangedSignal("Text"):Connect(UI.hint.update)
+
+UI.statusBar = new("Frame", { Name = "StatusBar", Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, LayoutOrder = 4 }, UI.executorPage)
+local function statusLabel(align, x, w)
+	return new("TextLabel", {
+		Size = UDim2.new(w, 0, 1, 0),
+		Position = UDim2.new(x, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = align,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, UI.statusBar)
+end
+UI.statusLeft = statusLabel(Enum.TextXAlignment.Left, 0, 0.3)
+UI.statusMid = statusLabel(Enum.TextXAlignment.Center, 0.3, 0.4)
+UI.statusRight = statusLabel(Enum.TextXAlignment.Right, 0.7, 0.3)
+
+UI.executorActions = new("Frame", { Name = "ExecutorActions", Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, LayoutOrder = 5 }, UI.executorPage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, UI.executorActions)
+
+local function createNativeButton(name, icon, text, isPrimary, parent, width, filled)
+	local btn = new("ImageButton", {
+		Name = name,
+		Size = UDim2.new(0, width or 130, 1, 0),
+		BackgroundColor3 = isPrimary and accent() or C.dim,
+		AutoButtonColor = false,
+		BackgroundTransparency = 0.6,
+	}, parent)
+	corner(btn, 8)
+	local holder = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, btn)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, holder)
+	local ic
+	if icon then
+		ic = newIcon(holder, icon, filled, 20, Color3.fromRGB(247, 247, 247))
+		ic.LayoutOrder = 1
+	end
+	new("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = Color3.fromRGB(247, 247, 247),
+		TextSize = 16,
+		FontFace = sans(),
+		LayoutOrder = 2,
+	}, holder)
+	if isPrimary then
+		accentize(btn)
+	end
+	btn.MouseEnter:Connect(function()
+		tweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = isPrimary and lighten(accent()) or Color3.fromRGB(40, 40, 40) }):Play()
+	end)
+	btn.MouseLeave:Connect(function()
+		tweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = isPrimary and accent() or C.dim }):Play()
+	end)
+	return btn, ic
+end
+
+UI.executeBtn = createNativeButton("ExecuteBtn", { "play-small" }, "Execute", true, UI.executorActions, 130, true)
+UI.clearBtn = createNativeButton("ClearBtn", { "trash-can" }, "Clear", false, UI.executorActions, 130, false)
+UI.copyBtn = createNativeButton("CopyBtn", { "two-stacked-squares" }, "Copy", false, UI.executorActions, 130, false)
+UI.saveBtn = createNativeButton("SaveBtn", { "floppy-disk" }, "Save", false, UI.executorActions, 80, false)
+UI.undoBtn = createNativeButton("UndoBtn", { "arrow-spin-counter-clockwise" }, "Undo", false, UI.executorActions, 80, false)
+UI.redoBtn = createNativeButton("RedoBtn", { "arrow-spin-clockwise" }, "Redo", false, UI.executorActions, 80, false)
+UI.findBtn = createNativeButton("FindBtn", { "magnifying-glass" }, "Find", false, UI.executorActions, 80, false)
+for i, b in ipairs({ UI.executeBtn, UI.clearBtn, UI.copyBtn, UI.saveBtn, UI.undoBtn, UI.redoBtn, UI.findBtn }) do
+	b.LayoutOrder = i
+end
+
+UI.actions2 = new("Frame", { Name = "ExecutorActions2", Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, LayoutOrder = 6 }, UI.executorPage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, UI.actions2)
+UI.runSelBtn = createNativeButton("RunSelBtn", { "circle-play" }, "Run Selection", false, UI.actions2, 160, true)
+UI.pasteBtn = createNativeButton("PasteBtn", { "clipboard-pencil" }, "Paste", false, UI.actions2, 100, false)
+UI.dupBtn = createNativeButton("DupBtn", { "stacked-squares-plus" }, "Duplicate", false, UI.actions2, 130, false)
+UI.pinBtn = createNativeButton("PinBtn", { "pin" }, "Pin Quick", false, UI.actions2, 130, false)
+UI.formatBtn = createNativeButton("FormatBtn", { "four-bars-horizontal-left-aligned" }, "Format", false, UI.actions2, 110, false)
+for i, b in ipairs({ UI.runSelBtn, UI.pasteBtn, UI.dupBtn, UI.pinBtn, UI.formatBtn }) do
+	b.LayoutOrder = i
+end
+
+UI.urlRow = new("Frame", { Name = "UrlRow", Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, LayoutOrder = 7 }, UI.executorPage)
+UI.urlBox = inputBox("Script URL (raw link, runs with loadstring)...", UI.urlRow)
+UI.urlBox.Size = UDim2.new(1, -258, 1, 0)
+UI.urlBox:FindFirstChildOfClass("UIPadding").PaddingLeft = UDim.new(0, 34)
+UI.urlIcon = newIcon(UI.urlBox, { "chain-link" }, false, 16, C.sub)
+UI.urlIcon.Position = UDim2.new(0, -26, 0.5, -10)
+UI.urlRight = new("Frame", { Size = UDim2.new(0, 250, 1, 0), Position = UDim2.new(1, -250, 0, 0), BackgroundTransparency = 1 }, UI.urlRow)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	HorizontalAlignment = Enum.HorizontalAlignment.Right,
+	Padding = UDim.new(0, 8),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, UI.urlRight)
+UI.urlRunBtn = iconBtn("Run", { "play-small" }, 90, UI.urlRight, 34, true)
+UI.urlRunBtn.LayoutOrder = 1
+UI.urlLoadBtn = iconBtn("Open in Tab", { "arrow-down-to-line" }, 140, UI.urlRight, 34, false)
+UI.urlLoadBtn.LayoutOrder = 2
+
+sectionHeader("Quick Scripts", UI.executorPage, 8)
+UI.quickScriptsScroll = new("ScrollingFrame", {
+	Name = "QuickScriptsScroll",
+	Size = UDim2.new(1, 0, 0, 112),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+	LayoutOrder = 9,
+}, UI.executorPage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, UI.quickScriptsScroll)
+
+UI.quickDrag = { active = false, moved = false, startX = 0, startPos = 0 }
+function UI.quickScrollBy(dx)
+	local sc = UI.quickScriptsScroll
+	sc.CanvasPosition = Vector2.new(math.max(0, sc.CanvasPosition.X + dx), 0)
+end
+function UI.quickDrag.over()
+	local ok, inside = pcall(function()
+		local mouse = userInputService:GetMouseLocation() - guiService:GetGuiInset()
+		local sc = UI.quickScriptsScroll
+		local pos, size = sc.AbsolutePosition, sc.AbsoluteSize
+		local canvas = sc.AbsoluteCanvasSize
+		if type(canvas.X) == "number" and canvas.X <= size.X + 1 then
+			return false
+		end
+		return mouse.X >= pos.X and mouse.X <= pos.X + size.X and mouse.Y >= pos.Y and mouse.Y <= pos.Y + size.Y
+	end)
+	return ok and inside == true
+end
+function UI.quickDrag.overPage()
+	local ok, inside = pcall(function()
+		local mouse = userInputService:GetMouseLocation() - guiService:GetGuiInset()
+		local function within(gui)
+			local pos, size = gui.AbsolutePosition, gui.AbsoluteSize
+			return mouse.X >= pos.X and mouse.X <= pos.X + size.X and mouse.Y >= pos.Y and mouse.Y <= pos.Y + size.Y
+		end
+		return within(UI.executorPage) and not within(UI.editorHolder)
+	end)
+	return ok and inside == true
+end
+function UI.quickDrag.begin(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		local drag = UI.quickDrag
+		drag.active = true
+		drag.moved = false
+		drag.startX = input.Position.X
+		drag.startPos = UI.quickScriptsScroll.CanvasPosition.X
+	end
+end
+UI.quickScriptsScroll.InputBegan:Connect(UI.quickDrag.begin)
+track(userInputService.InputChanged:Connect(function(input)
+	local drag = UI.quickDrag
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		if UI.executorPage.Visible and UI.content.Visible and drag.over() then
+			UI.quickScrollBy(-input.Position.Z * 90)
+		elseif UI.executorPage.Visible and UI.content.Visible and drag.overPage() then
+			local page = UI.executorPage
+			local before = page.CanvasPosition.Y
+			local step = -input.Position.Z * 70
+			task.delay(0.03, function()
+				if page.CanvasPosition.Y == before then
+					page.CanvasPosition = Vector2.new(0, math.max(0, before + step))
+				end
+			end)
+		end
+	elseif drag.active and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local dx = input.Position.X - drag.startX
+		if math.abs(dx) > 5 then
+			drag.moved = true
+		end
+		if drag.moved then
+			UI.quickScriptsScroll.CanvasPosition = Vector2.new(math.max(0, drag.startPos - dx / (UI.scaleValue or 1)), 0)
+		end
+	end
+end))
+track(userInputService.InputEnded:Connect(function(input)
+	local drag = UI.quickDrag
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and drag.active then
+		drag.active = false
+		if drag.moved then
+			task.delay(0.15, function()
+				drag.moved = false
+			end)
+		end
+	end
+end))
+
+local quickOrder = 0
+
+local function createQuickScript(name, source, imgPaths, pinData)
+	local imgPath = imgPaths and (QUICK_SCRIPTS_THUMBS .. "/" .. imgPaths) or nil
+	quickOrder += 1
+	local btn = new("ImageButton", {
+		Name = pinData and "Pinned" or "Builtin",
+		Size = UDim2.new(0, 160, 0, 100),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.6,
+		AutoButtonColor = false,
+		LayoutOrder = pinData and (1000 + quickOrder) or quickOrder,
+	}, UI.quickScriptsScroll)
+	corner(btn, 8)
+	local bgImage = new("ImageLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+		ImageTransparency = 0.8,
+		ZIndex = 1,
+	}, btn)
+	if imgPath and hasFS and getcustomasset then
+		task.spawn(function()
+			pcall(function()
+				if isfile(imgPath) then
+					bgImage.Image = getcustomasset(imgPath)
+				end
+			end)
+		end)
+	end
+	corner(bgImage, 8)
+	local ic = newIcon(btn, pinData and { "pin" } or { "play-small" }, pinData ~= nil, 18, Color3.new(0.835, 0.843, 0.866))
+	ic.Position = UDim2.new(0, 10, 0, 8)
+	ic.ZIndex = 2
+	new("TextLabel", {
+		Size = UDim2.new(1, -16, 1, 0),
+		Position = UDim2.new(0, 8, 0, 0),
+		BackgroundTransparency = 1,
+		Text = name,
+		TextColor3 = Color3.new(0.835, 0.843, 0.866),
+		TextSize = 14,
+		FontFace = sans(),
+		TextWrapped = true,
+		ZIndex = 2,
+	}, btn)
+	btn.InputBegan:Connect(UI.quickDrag.begin)
+	btn.MouseButton1Click:Connect(function()
+		if UI.quickDrag.moved then
+			return
+		end
+		runSource(source, name)
+	end)
+	if pinData then
+		btn.MouseButton2Click:Connect(function()
+			removePin(pinData)
+		end)
+	end
+end
+
+removePin = function(entry)
+	local list = settings.pinned
+	for i, p in ipairs(list) do
+		if p == entry then
+			table.remove(list, i)
+			break
+		end
+	end
+	setSetting("pinned", list)
+	rebuildQuick()
+	notify("Removed pinned script '" .. tostring(entry.name) .. "'", "info")
+end
+rebuildQuick = function()
+	for _, c in ipairs(UI.quickScriptsScroll:GetChildren()) do
+		if c.Name == "Pinned" then
+			c:Destroy()
+		end
+	end
+	for _, p in ipairs(settings.pinned) do
+		if type(p) == "table" and type(p.source) == "string" then
+			createQuickScript(tostring(p.name or "Pinned"), p.source, nil, p)
+		end
+	end
+end
+
+createQuickScript("Infinite Yield", "loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()", "infy.png")
+createQuickScript("Dex Explorer", "loadstring(game:HttpGet('https://github.com/Tesker-103/DexRecontinued/releases/latest/download/out.lua'))()", "drc.png")
+createQuickScript("Freecam", "loadstring(game:HttpGet('https://gist.githubusercontent.com/fiangg20/94b8192bb1e3299dd71ecfcfa777cffa/raw/freecam.luau'))()", "frc.png")
+createQuickScript("whatever hub", "loadstring(game:HttpGet('https://gist.githubusercontent.com/fiangg20/f2a909efffd5e7b0cba095bf1c6c214c/raw/whateverhub.luau'))()", "whatever.png")
+rebuildQuick()
+
+
+themes = {
+	{
+		name = "One Dark",
+		colors = { comment = "#7C7C8A", string = "#A5E590", number = "#E5C07B", keyword = "#C678DD", const = "#D19A66", builtin = "#61AFEF", func = "#56B6C2", op = "#C8CCD4" },
+	},
+	{
+		name = "Monokai",
+		colors = { comment = "#75715E", string = "#E6DB74", number = "#AE81FF", keyword = "#F92672", const = "#AE81FF", builtin = "#66D9EF", func = "#A6E22E", op = "#F8F8F2" },
+	},
+	{
+		name = "Dracula",
+		colors = { comment = "#6272A4", string = "#F1FA8C", number = "#BD93F9", keyword = "#FF79C6", const = "#BD93F9", builtin = "#8BE9FD", func = "#50FA7B", op = "#F8F8F2" },
+	},
+	{
+		name = "Solarized",
+		colors = { comment = "#586E75", string = "#2AA198", number = "#D33682", keyword = "#859900", const = "#CB4B16", builtin = "#268BD2", func = "#B58900", op = "#93A1A1" },
+	},
+	{
+		name = "Tokyo Night",
+		colors = { comment = "#565F89", string = "#9ECE6A", number = "#FF9E64", keyword = "#BB9AF7", const = "#FF9E64", builtin = "#7AA2F7", func = "#7DCFFF", op = "#89DDFF" },
+	},
+}
+HL = {}
+for k, c in pairs(themes[1].colors) do
+	HL[k] = c
+end
+local keywords, consts, builtins = {}, { ["true"] = true, ["false"] = true, ["nil"] = true }, {}
+for w in ("and break continue do else elseif end for function goto if in local not or repeat return then until while"):gmatch("%S+") do
+	keywords[w] = true
+end
+for w in ([[game workspace script math string table task coroutine Instance Color3 Vector3 Vector2 UDim2 UDim Enum CFrame Ray Rect
+	TweenInfo Random Font BrickColor NumberRange NumberSequence ColorSequence print warn error require pcall xpcall loadstring
+	tostring tonumber ipairs pairs next select type typeof unpack getgenv getrenv getfenv setfenv os debug bit32 utf8 wait spawn delay
+	tick time assert rawget rawset setmetatable getmetatable shared _G _VERSION Drawing]]):gmatch("%S+") do
+	builtins[w] = true
+end
+
+function highlight(src)
+	local out, n = {}, 0
+	local len = #src
+	local i = 1
+	local prevWord, lastSig = "", ""
+	local function add(s)
+		n += 1
+		out[n] = s
+	end
+	local function tok(color, s)
+		add('<font color="' .. color .. '">' .. esc(s) .. "</font>")
+	end
+
+	while i <= len do
+		local c = src:sub(i, i)
+		if c == "-" and src:sub(i + 1, i + 1) == "-" then
+			local eq = src:match("^%-%-%[(=*)%[", i)
+			local e
+			if eq then
+				local _, ce = src:find("]" .. eq .. "]", i + 4 + #eq, true)
+				e = ce or len
+			else
+				local nl = src:find("\n", i, true)
+				e = nl and (nl - 1) or len
+			end
+			tok(HL.comment, src:sub(i, e))
+			i = e + 1
+			lastSig = ""
+		elseif c == '"' or c == "'" then
+			local j = i + 1
+			while j <= len do
+				local d = src:sub(j, j)
+				if d == "\\" then
+					j += 2
+				elseif d == c or d == "\n" then
+					break
+				else
+					j += 1
+				end
+			end
+			local e
+			if src:sub(j, j) == c then
+				e = j
+			else
+				e = math.min(j - 1, len)
+			end
+			tok(HL.string, src:sub(i, e))
+			i = e + 1
+			lastSig = c
+		elseif c == "[" and src:match("^%[=*%[", i) then
+			local eq = src:match("^%[(=*)%[", i)
+			local _, ce = src:find("]" .. eq .. "]", i + 2 + #eq, true)
+			local e = ce or len
+			tok(HL.string, src:sub(i, e))
+			i = e + 1
+			lastSig = "]"
+		elseif c:match("%d") or (c == "." and src:sub(i + 1, i + 1):match("%d")) then
+			local s = src:match("^0[xX][%x_]+", i) or src:match("^0[bB][01_]+", i)
+			if not s then
+				s = src:match("^%d[%d_]*%.?[%d_]*", i) or src:match("^%.%d[%d_]*", i)
+				if s:sub(-1) == "." and src:sub(i + #s, i + #s) == "." then
+					s = s:sub(1, -2)
+				end
+				local ex = src:match("^[eE][%+%-]?%d+", i + #s)
+				if ex then
+					s = s .. ex
+				end
+			end
+			tok(HL.number, s)
+			i += #s
+			lastSig = "0"
+		elseif c:match("[%a_]") then
+			local w = src:match("^[%a_][%w_]*", i)
+			local j = i + #w
+			local member = (lastSig == "." or lastSig == ":")
+			local color
+			if member then
+				if src:match("^%s*%(", j) then
+					color = HL.func
+				end
+			elseif keywords[w] then
+				color = HL.keyword
+			elseif consts[w] then
+				color = HL.const
+			elseif prevWord == "function" or src:match("^%s*%(", j) then
+				color = builtins[w] and HL.builtin or HL.func
+			elseif builtins[w] then
+				color = HL.builtin
+			end
+			if color then
+				tok(color, w)
+			else
+				add(w)
+			end
+			prevWord = w
+			lastSig = w:sub(-1)
+			i = j
+		elseif c:match("%s") then
+			local ws = src:match("^%s+", i)
+			add(ws)
+			i += #ws
+		else
+			local run = src:match("^[%+%*/%%%^#=~<>]+", i)
+			if run then
+				tok(HL.op, run)
+				i += #run
+				lastSig = run:sub(-1)
+			elseif c == "-" then
+				tok(HL.op, "-")
+				i += 1
+				lastSig = "-"
+			else
+				add(esc(c))
+				lastSig = c
+				i += 1
+			end
+		end
+	end
+	return table.concat(out)
+end
+
+function normalize(src)
+	src = tostring(src or "")
+	src = src:gsub("\r\n", "\n")
+	src = src:gsub("\r", "\n")
+	src = src:gsub("\226\128[\168\169]", "\n")
+	src = src:gsub("\t", string.rep(" ", settings.tabSize))
+	return src
+end
+
+function sanitize(name)
+	name = tostring(name or "")
+	name = name:gsub("[^%w%s%-%_%.%(%)]", "")
+	name = name:match("^%s*(.-)%s*$")
+	if name == "" then
+		name = "Unnamed"
+	end
+	return name:sub(1, 40)
+end
+
+scriptData = {}
+activeTabIndex = 1
+
+function scriptPath(name)
+	return FOLDER .. "/" .. name .. ".lua"
+end
+
+function uniqueName(base, ignoreIndex)
+	local taken = {}
+	for i, d in ipairs(scriptData) do
+		if i ~= ignoreIndex then
+			taken[d.name:lower()] = true
+		end
+	end
+	local name, n = base, 1
+	while taken[name:lower()] do
+		n += 1
+		name = base .. " " .. n
+	end
+	return name
+end
+
+scriptsLoaded = not hasFS
+function welcomeSource()
+		return "print('Bases Injection Successful')\n-- Welcome to " .. UI.brand.name
+	end
+table.insert(scriptData, {
+	name = "Script 1",
+	source = hasFS and "" or welcomeSource(),
+	dirty = not hasFS,
+	placeholder = hasFS or nil,
+})
+
+function loadSavedScripts()
+	local names, seen = {}, {}
+	local entries, listed = fsList(FOLDER, true)
+	table.sort(entries, function(a, b)
+		return a.name:lower() < b.name:lower()
+	end)
+	for _, e in ipairs(entries) do
+		local name = not e.isDir and e.name:match("^(.+)%.lua$")
+		if name and not seen[name:lower()] then
+			seen[name:lower()] = true
+			names[#names + 1] = name
+		end
+	end
+	for _, name in ipairs(settings.tabOrder) do
+		if type(name) == "string" and not seen[name:lower()] then
+			seen[name:lower()] = true
+			names[#names + 1] = name
+		end
+	end
+	local sources = {}
+	fsParallel(#names, function(k)
+		sources[k] = fsRead(scriptPath(names[k]))
+	end)
+	local loaded = {}
+	for k, name in ipairs(names) do
+		if sources[k] then
+			loaded[#loaded + 1] = { name = name, source = normalize(sources[k]), dirty = false }
+		end
+	end
+	return loaded, listed
+end
+
+function saveDirty(force)
+	if not hasFS or not scriptsLoaded then
+		return 0
+	end
+	local count = 0
+	for _, d in ipairs(scriptData) do
+		if d.dirty or force then
+			local body = d.source
+			if settings.trimOnSave then
+				body = body:gsub("[ \t]+\n", "\n")
+				body = body:gsub("[ \t]+$", "")
+			end
+			if pcall(writefile, scriptPath(d.name), body) then
+				d.dirty = false
+				count += 1
+			end
+		end
+	end
+	return count
+end
+task.spawn(function()
+	while running do
+		task.wait(math.max(1, settings.autoSaveInterval))
+		if running and settings.autoSave then
+			saveDirty()
+		end
+	end
+end)
+
+charW, lineH = settings.fontSize * 0.6, settings.fontSize * 1.2
+canvasW, canvasH = 700, EDITOR_H
+local gutterW = 40
+lineCount, maxCols, shownLines = 1, 0, 0
+lastText = ""
+lastLn, lastCol = 1, 1
+IND = { marks = {}, lintToken = 0, pairs = {}, unmatched = {}, guideFrames = {}, selFrames = {} }
+findOpen = false
+local HIGHLIGHT_LIMIT = 20000
+local MAX_COLS_LAYOUT = 3000
+
+function syncGutter()
+	local y = PAD_T - UI.editorScroll.CanvasPosition.Y
+	UI.lineNumbers.Position = UDim2.new(0, 0, 0, y)
+	UI.activeNum.Position = UDim2.new(0, 0, 0, y + (lastLn - 1) * lineH)
+	for i, g in ipairs(UI.errGutter) do
+		local m = IND.marks[i]
+		if m then
+			g.Position = UDim2.new(0, 0, 0, y + (m.line - 1) * lineH)
+		end
+	end
+end
+
+function relayout()
+	local showNums = settings.lineNumbers
+	local digits = #tostring(lineCount)
+	gutterW = showNums and math.max(36, math.ceil(digits * charW) + 20) or 0
+	UI.gutter.Visible = showNums
+	UI.gutter.Size = UDim2.new(0, gutterW, 1, 0)
+	UI.editorScroll.Position = UDim2.new(0, gutterW, 0, 0)
+	UI.editorScroll.Size = UDim2.new(1, -gutterW, 1, 0)
+
+	local holderW = UI.editorHolder.AbsoluteSize.X / (UI.scaleValue or 1)
+	if holderW < 100 then
+		holderW = 796
+	end
+	local holderH = UI.editorHolder.AbsoluteSize.Y / (UI.scaleValue or 1)
+	if holderH < 50 then
+		holderH = settings.editorHeight
+	end
+	local thick = UI.editorScroll.ScrollBarThickness
+	local viewW = holderW - gutterW - thick
+	local viewH = holderH - thick
+
+	local cols = math.min(maxCols, MAX_COLS_LAYOUT)
+	canvasW = math.max(viewW, PAD_L * 2 + (cols + 3) * charW)
+	canvasH = math.max(viewH, PAD_T * 2 + (lineCount + 1) * lineH)
+	UI.editorScroll.CanvasSize = UDim2.fromOffset(canvasW, canvasH)
+
+	local tw, th = canvasW - PAD_L, canvasH - PAD_T
+	UI.highlighter.Size = UDim2.fromOffset(tw, th)
+	UI.editorBox.Size = UDim2.fromOffset(tw, th)
+
+	if lineCount ~= shownLines then
+		shownLines = lineCount
+		local t = table.create(lineCount)
+		for k = 1, lineCount do
+			t[k] = k
+		end
+		UI.lineNumbers.Text = table.concat(t, "\n")
+	end
+	UI.lineNumbers.Size = UDim2.new(1, -10, 0, lineCount * lineH + 4)
+	syncGutter()
+	if IND.update then
+		IND.guideKey = nil
+		IND.update()
+	end
+end
+
+local function measureFont()
+	local size = settings.fontSize
+	local ok = pcall(function()
+		local p = Instance.new("GetTextBoundsParams")
+		p.Font = MONO
+		p.Size = size
+		p.Width = 100000
+		p.Text = string.rep("M", 100)
+		local w = textService:GetTextBoundsAsync(p)
+		p.Text = "M"
+		local h1 = textService:GetTextBoundsAsync(p)
+		p.Text = "M\nM"
+		local h2 = textService:GetTextBoundsAsync(p)
+		charW = w.X / 100
+		lineH = h2.Y - h1.Y
+	end)
+	if not ok or charW < 3 or lineH < 6 then
+		charW, lineH = size * 0.6, size * 1.2
+	end
+end
+
+function applyFont()
+	UI.highlighter.TextSize = settings.fontSize
+	UI.editorBox.TextSize = settings.fontSize
+	UI.lineNumbers.TextSize = settings.fontSize
+	UI.hint.update()
+	task.spawn(function()
+		measureFont()
+		relayout()
+	end)
+end
+
+function cursorLineCol()
+	local text = UI.editorBox.Text
+	local cur = UI.editorBox.CursorPosition
+	if cur < 1 then
+		return lastLn, lastCol
+	end
+	local ln, lastNl = 1, 0
+	for pos in text:sub(1, cur - 1):gmatch("()\n") do
+		ln += 1
+		lastNl = pos
+	end
+	lastLn, lastCol = ln, cur - lastNl
+	return lastLn, lastCol
+end
+
+function ensureVisible(x, y, w)
+	local pos = UI.editorScroll.CanvasPosition
+	local view = UI.editorScroll.AbsoluteSize / (UI.scaleValue or 1)
+	local vw, vh = view.X - 10, view.Y - 10
+	local nx, ny = pos.X, pos.Y
+	w = w or charW
+	if y < ny then
+		ny = y - lineH
+	elseif y + lineH * 2 > ny + vh then
+		ny = y + lineH * 2 - vh
+	end
+	if x < nx then
+		nx = x - charW * 4
+	elseif x + w + charW * 2 > nx + vw then
+		nx = x + w + charW * 2 - vw
+	end
+	nx, ny = math.max(0, nx), math.max(0, ny)
+	if nx ~= pos.X or ny ~= pos.Y then
+		UI.editorScroll.CanvasPosition = Vector2.new(nx, ny)
+	end
+end
+
+function updateCursorUI()
+	local ln, col = cursorLineCol()
+	if settings.highlightLine then
+		UI.curLine.Visible = true
+		UI.curLine.Position = UDim2.fromOffset(0, PAD_T + (ln - 1) * lineH)
+		UI.curLine.Size = UDim2.fromOffset(canvasW, lineH)
+	else
+		UI.curLine.Visible = false
+	end
+	if IND.update then
+		IND.update(ln)
+		IND.status(ln, col)
+	end
+	return ln, col
+end
+
+function refreshEditor()
+	local text = lastText
+	local n, maxc, len = 1, 0, #text
+	local lineStart = 1
+	while true do
+		local nl = string.find(text, "\n", lineStart, true)
+		local l = (nl or (len + 1)) - lineStart
+		if l > maxc then
+			maxc = l
+		end
+		if not nl then
+			break
+		end
+		n += 1
+		lineStart = nl + 1
+	end
+	lineCount, maxCols = n, maxc
+
+	local useHL = settings.highlight and len <= HIGHLIGHT_LIMIT
+	UI.highlighter.Visible = useHL
+	UI.editorBox.TextTransparency = useHL and 1 or 0
+	if useHL then
+		if len == 0 then
+			UI.highlighter.Text = ""
+		else
+			local ok, res = pcall(highlight, text)
+			UI.highlighter.Text = ok and res or esc(text)
+		end
+	end
+	UI.hint.update()
+	relayout()
+	updateCursorUI()
+end
+
+function currentData()
+	return scriptData[activeTabIndex]
+end
+function histOf(d)
+	if not d.hist then
+		d.hist = { stack = { { text = d.source, cursor = 1 } }, idx = 1, t = 0 }
+	end
+	return d.hist
+end
+local function pushHistory(cursor)
+	local d = currentData()
+	if not d then
+		return
+	end
+	local h = histOf(d)
+	if h.stack[h.idx] and h.stack[h.idx].text == lastText then
+		return
+	end
+	local entry = { text = lastText, cursor = cursor or UI.editorBox.CursorPosition }
+	local now = os.clock()
+	if h.idx == #h.stack and h.idx > 1 and (now - h.t) < 0.7 then
+		h.stack[h.idx] = entry
+	else
+		for i = #h.stack, h.idx + 1, -1 do
+			h.stack[i] = nil
+		end
+		table.insert(h.stack, entry)
+		h.idx = #h.stack
+		if #h.stack > 200 then
+			table.remove(h.stack, 1)
+			h.idx -= 1
+		end
+	end
+	h.t = now
+end
+
+local function afterChange(pushHist, cursor)
+	local d = currentData()
+	if d then
+		d.source = lastText
+		d.dirty = true
+	end
+	if pushHist then
+		pushHistory(cursor)
+	end
+	refreshEditor()
+	if findOpen and runFind then
+		runFind(true)
+	end
+end
+
+function commitEdit(newText, cursor)
+	lastText = newText
+	UI.editorBox.Text = newText
+	pcall(function()
+		UI.editorBox.CursorPosition = math.clamp(cursor or (#newText + 1), 1, #newText + 1)
+	end)
+	afterChange(true, cursor)
+end
+
+local function applyEntry(e)
+	lastText = e.text
+	UI.editorBox.Text = e.text
+	pcall(function()
+		UI.editorBox.CursorPosition = math.clamp(e.cursor, 1, #e.text + 1)
+	end)
+	afterChange(false)
+end
+function undo()
+	local d = currentData()
+	if not d then
+		return
+	end
+	local h = histOf(d)
+	if h.idx > 1 then
+		h.idx -= 1
+		h.t = 0
+		applyEntry(h.stack[h.idx])
+	end
+end
+function redo()
+	local d = currentData()
+	if not d then
+		return
+	end
+	local h = histOf(d)
+	if h.idx < #h.stack then
+		h.idx += 1
+		h.t = 0
+		applyEntry(h.stack[h.idx])
+	end
+end
+
+local closers = { ["("] = ")", ["["] = "]", ["{"] = "}", ['"'] = '"', ["'"] = "'" }
+local closerSet = { [")"] = true, ["]"] = true, ["}"] = true, ['"'] = true, ["'"] = true }
+local dedentWords = { ["end"] = true, ["else"] = true, ["until"] = true }
+
+local function lineStartOf(text, idx)
+	local p = idx - 1
+	while p >= 1 and text:sub(p, p) ~= "\n" do
+		p -= 1
+	end
+	return p + 1
+end
+
+local function smartInsert(text, idx, ch)
+	local nextCh = text:sub(idx + 1, idx + 1)
+	local prevCh = idx > 1 and text:sub(idx - 1, idx - 1) or ""
+	local tabSize = settings.tabSize
+
+	if ch == "\n" then
+		if not settings.autoIndent then
+			return nil
+		end
+		local prevStart = lineStartOf(text, idx)
+		local prevLine = text:sub(prevStart, idx - 1)
+		local indent = prevLine:match("^ *")
+		local code = prevLine:gsub("%-%-.*$", "")
+		code = code:gsub("%s+$", "")
+		local opens = code:match("%f[%w_]then$")
+			or code:match("%f[%w_]do$")
+			or code:match("%f[%w_]else$")
+			or code:match("%f[%w_]repeat$")
+			or code:match("[%({]$")
+			or code:match("%f[%w_]function%s*[%w_%.:]*%s*%b()$")
+		local extra = opens and string.rep(" ", tabSize) or ""
+		if indent == "" and extra == "" then
+			return nil
+		end
+		local before, after = text:sub(1, idx), text:sub(idx + 1)
+		local pairClose = ({ ["("] = ")", ["{"] = "}" })[code:sub(-1)]
+		if opens and pairClose and nextCh == pairClose then
+			return before .. indent .. extra .. "\n" .. indent .. after, idx + #indent + #extra + 1
+		end
+		return before .. indent .. extra .. after, idx + #indent + #extra + 1
+	end
+
+	if settings.autoIndent and (ch:match("%a") or ch == "}" or ch == ")" or ch == "]") and (nextCh == "" or nextCh == "\n") then
+		local ls = lineStartOf(text, idx)
+		local le = text:find("\n", idx + 1, true) or (#text + 1)
+		local line = text:sub(ls, le - 1)
+		local trimmed = line:match("^%s*(.-)%s*$")
+		if dedentWords[trimmed] or (not ch:match("%a") and trimmed == ch) then
+			local indent = line:match("^ *")
+			if #indent >= tabSize then
+				return text:sub(1, ls - 1) .. line:sub(tabSize + 1) .. text:sub(le), idx + 1 - tabSize
+			end
+		end
+	end
+
+	if settings.autoClose then
+		if closerSet[ch] and nextCh == ch then
+			return text:sub(1, idx - 1) .. text:sub(idx + 1), idx + 1
+		end
+		local close = closers[ch]
+		if close then
+			local nextOk = nextCh == "" or nextCh:match("[%s%)%]}%,;]") ~= nil
+			if (ch == '"' or ch == "'") and prevCh:match("[%w_]") then
+				nextOk = false
+			end
+			if nextOk then
+				return text:sub(1, idx) .. close .. text:sub(idx + 1), idx + 1
+			end
+		end
+	end
+	return nil
+end
+
+local function onTextChanged()
+	local text = UI.editorBox.Text
+	if text == lastText then
+		return
+	end
+	local old = lastText
+	local cursor = UI.editorBox.CursorPosition
+	local newText, newCursor, modified = text, cursor, false
+
+	if text:find("[\t\r\226]") then
+		local fixed = normalize(text)
+		if fixed ~= text then
+			newText = fixed
+			newCursor = cursor >= 1 and (#normalize(text:sub(1, cursor - 1)) + 1) or cursor
+			modified = true
+		end
+	end
+	if not modified and #text == #old + 1 and cursor > 1 then
+		local idx = cursor - 1
+		if text:sub(1, idx - 1) == old:sub(1, idx - 1) and text:sub(idx + 1) == old:sub(idx) then
+			local t2, c2 = smartInsert(text, idx, text:sub(idx, idx))
+			if t2 then
+				newText, newCursor, modified = t2, c2, true
+			end
+		end
+	end
+
+	lastText = newText
+	if modified then
+		UI.editorBox.Text = newText
+		pcall(function()
+			UI.editorBox.CursorPosition = newCursor
+		end)
+	end
+	afterChange(true, newCursor)
+	if UI.editorBox:IsFocused() then
+		local ln, col = updateCursorUI()
+		ensureVisible(PAD_L + (col - 1) * charW, PAD_T + (ln - 1) * lineH)
+	end
+	if math.abs(#newText - #old) > 1 then
+		task.defer(relayout)
+	end
+end
+UI.editorBox:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
+UI.editorBox:GetPropertyChangedSignal("CursorPosition"):Connect(function()
+	local ln, col = updateCursorUI()
+	if UI.editorBox:IsFocused() then
+		ensureVisible(PAD_L + (col - 1) * charW, PAD_T + (ln - 1) * lineH)
+	end
+end)
+UI.editorScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(syncGutter)
+UI.editorHolder:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+
+function toggleComment()
+	local text = lastText
+	local cur = UI.editorBox.CursorPosition
+	if cur < 1 then
+		return
+	end
+	local sel = UI.editorBox.SelectionStart
+	local a, b = cur, cur
+	if sel ~= -1 then
+		a, b = math.min(cur, sel), math.max(cur, sel)
+	end
+	local ls = lineStartOf(text, a)
+	local endPos = b
+	if b > a and text:sub(b - 1, b - 1) == "\n" then
+		endPos = b - 1
+	end
+	local le = text:find("\n", endPos, true) or (#text + 1)
+	local block = text:sub(ls, le - 1)
+	local lines = {}
+	for line in (block .. "\n"):gmatch("(.-)\n") do
+		lines[#lines + 1] = line
+	end
+	local allCommented = true
+	for _, l in ipairs(lines) do
+		if l:match("%S") and not l:match("^%s*%-%-") then
+			allCommented = false
+			break
+		end
+	end
+	local out = {}
+	for _, l in ipairs(lines) do
+		if not l:match("%S") then
+			out[#out + 1] = l
+		elseif allCommented then
+			out[#out + 1] = (l:gsub("^(%s*)%-%- ?", "%1"))
+		else
+			out[#out + 1] = (l:gsub("^(%s*)", "%1-- "))
+		end
+	end
+	local newBlock = table.concat(out, "\n")
+	local newText = text:sub(1, ls - 1) .. newBlock .. text:sub(le)
+	local newCursor
+	if #lines == 1 then
+		newCursor = math.max(ls, cur + (#newBlock - #block))
+	else
+		newCursor = ls + #newBlock
+	end
+	commitEdit(newText, newCursor)
+end
+
+matches, matchIdx, caseSensitive = {}, 0, false
+
+function hideMatchFrames(from)
+	for i = from, #matchPool do
+		matchPool[i].Visible = false
+	end
+end
+
+end)()
+local hlColor, refreshWorkspace, refreshMusicList, refreshNowPlaying, playTrack, rescanMusic, drawMatches, openFind, renderScriptTabs, loadTab, saveTabOrder, addTab, hubRequest, hubLoaded, lastQuery, fetchScripts, plSpectating, plFollowing, plFollowToken, plAllHighlight, hlColorOptions, copyText, plRefreshBtn, plEspBtn, plEspIcon, setHighlight, stopSpectate, stopFollow, setAllHighlights, updateActionStates, styleRows, updatePlayers
+;(function()
+local function buildLineStarts(text)
+	local starts, p = { 1 }, 1
+	while true do
+		local nl = text:find("\n", p, true)
+		if not nl then
+			break
+		end
+		starts[#starts + 1] = nl + 1
+		p = nl + 1
+	end
+	return starts
+end
+local function lineColOf(starts, index)
+	local lo, hi = 1, #starts
+	while lo < hi do
+		local mid = math.floor((lo + hi + 1) / 2)
+		if starts[mid] <= index then
+			lo = mid
+		else
+			hi = mid - 1
+		end
+	end
+	return lo, index - starts[lo]
+end
+
+IND.LIMIT = 60000
+IND.openers = { ["("] = true, ["["] = true, ["{"] = true }
+IND.closerOf = { [")"] = "(", ["]"] = "[", ["}"] = "{" }
+IND.brackets = { ["("] = true, ["["] = true, ["{"] = true, [")"] = true, ["]"] = true, ["}"] = true }
+
+function IND.getStarts()
+	if IND.startsText ~= lastText then
+		IND.starts = buildLineStarts(lastText)
+		IND.startsText = lastText
+	end
+	return IND.starts
+end
+
+function IND.scanBrackets(src)
+	local map, unmatched, stack, err = {}, {}, {}, nil
+	local len, i = #src, 1
+	local pat = "[%(%)%[%]{}\"'`%-]"
+	while i <= len do
+		local s = src:find(pat, i)
+		if not s then
+			break
+		end
+		local c = src:sub(s, s)
+		if c == "-" then
+			if src:sub(s + 1, s + 1) == "-" then
+				local eq = src:match("^%-%-%[(=*)%[", s)
+				if eq then
+					local _, ce = src:find("]" .. eq .. "]", s + 4 + #eq, true)
+					i = (ce or len) + 1
+				else
+					i = (src:find("\n", s, true) or len) + 1
+				end
+			else
+				i = s + 1
+			end
+		elseif c == '"' or c == "'" or c == "`" then
+			local strPat = c == "`" and "[\\`]" or ("[\\\n" .. c .. "]")
+			local j = s + 1
+			while true do
+				local p = src:find(strPat, j)
+				if not p then
+					j = len + 1
+					break
+				end
+				if src:sub(p, p) == "\\" then
+					j = p + 2
+				else
+					j = p
+					break
+				end
+			end
+			i = j + 1
+		elseif c == "[" and src:match("^%[=*%[", s) then
+			local eq = src:match("^%[(=*)%[", s)
+			local _, ce = src:find("]" .. eq .. "]", s + 2 + #eq, true)
+			i = (ce or len) + 1
+		elseif IND.openers[c] then
+			stack[#stack + 1] = { c = c, pos = s }
+			i = s + 1
+		else
+			local top = stack[#stack]
+			if top and top.c == IND.closerOf[c] then
+				stack[#stack] = nil
+				map[top.pos] = s
+				map[s] = top.pos
+			else
+				unmatched[s] = true
+				if not err then
+					err = { pos = s, msg = "Unexpected '" .. c .. "'" }
+				end
+			end
+			i = s + 1
+		end
+	end
+	for _, t in ipairs(stack) do
+		unmatched[t.pos] = true
+		if not err or t.pos < err.pos then
+			err = { pos = t.pos, msg = "Unclosed '" .. t.c .. "'" }
+		end
+	end
+	return map, unmatched, err
+end
+
+function IND.ensureBrackets()
+	if IND.bracketText ~= lastText then
+		IND.bracketText = lastText
+		IND.pairs, IND.unmatched, IND.bErr = IND.scanBrackets(lastText)
+	end
+end
+
+function IND.layoutBars(ln)
+	local on = settings.highlightLine
+	UI.activeNum.Visible = on and settings.lineNumbers
+	if on then
+		UI.activeNum.Text = tostring(ln)
+		UI.activeNum.TextSize = settings.fontSize
+		UI.activeNum.Size = UDim2.new(1, -10, 0, lineH + 4)
+	end
+	syncGutter()
+end
+
+function IND.drawBrackets()
+	local a, b = UI.brFrames[1], UI.brFrames[2]
+	a.Visible, b.Visible = false, false
+	if not settings.bracketMatch or #lastText > IND.LIMIT then
+		return
+	end
+	local text = lastText
+	local cur = UI.editorBox.CursorPosition
+	if cur < 1 then
+		return
+	end
+	local pos
+	if cur > 1 and IND.brackets[text:sub(cur - 1, cur - 1)] then
+		pos = cur - 1
+	elseif IND.brackets[text:sub(cur, cur)] then
+		pos = cur
+	end
+	if not pos then
+		return
+	end
+	IND.ensureBrackets()
+	local mate = IND.pairs[pos]
+	if not mate and not IND.unmatched[pos] then
+		return
+	end
+	local starts = IND.getStarts()
+	local function place(f, p, color, transparency)
+		local line, col = lineColOf(starts, p)
+		f.Visible = true
+		f.BackgroundColor3 = color
+		f.BackgroundTransparency = transparency
+		f.Position = UDim2.fromOffset(PAD_L + col * charW, PAD_T + (line - 1) * lineH)
+		f.Size = UDim2.fromOffset(charW, lineH)
+	end
+	if mate then
+		place(a, pos, accent(), 0.55)
+		place(b, mate, accent(), 0.55)
+	else
+		place(a, pos, C.red, 0.4)
+	end
+end
+
+function IND.drawGuides(force)
+	local frames = IND.guideFrames
+	if not settings.indentGuides or #lastText > IND.LIMIT then
+		for _, f in ipairs(frames) do
+			f.Visible = false
+		end
+		IND.guideKey = nil
+		return
+	end
+	local sc = UI.editorScroll
+	local viewH = sc.AbsoluteSize.Y / (UI.scaleValue or 1)
+	if viewH < 50 then
+		viewH = settings.editorHeight
+	end
+	local top = sc.CanvasPosition.Y
+	local first = math.max(1, math.floor((top - PAD_T) / lineH) + 1)
+	local last = math.min(lineCount, math.ceil((top + viewH - PAD_T) / lineH) + 1)
+	local tab = settings.tabSize
+	local activeLine = lastLn
+	local key = table.concat({ first, last, tab, activeLine, math.floor(charW * 100), math.floor(lineH * 100) }, ":")
+	if not force and IND.guideKey == key and IND.guideText == lastText then
+		return
+	end
+	IND.guideKey, IND.guideText = key, lastText
+
+	local text = lastText
+	local starts = IND.getStarts()
+	local from, to = math.max(1, first - 40), math.min(lineCount, last + 40)
+	local ind = {}
+	for i = from, to do
+		local s = starts[i]
+		local e = (starts[i + 1] or (#text + 2)) - 2
+		local n = #text:match("^ *", s)
+		ind[i] = (s + n > e) and -1 or n
+	end
+	local nextNon, carry = {}, 0
+	for i = to, from, -1 do
+		if ind[i] >= 0 then
+			carry = ind[i]
+		end
+		nextNon[i] = carry
+	end
+	local prev = 0
+	for i = from, to do
+		if ind[i] >= 0 then
+			prev = ind[i]
+		else
+			ind[i] = math.min(prev, nextNon[i])
+		end
+	end
+
+	local act = ind[activeLine] or 0
+	local activeLevel = act > 0 and (math.floor((act - 1) / tab) + 1) or 0
+	local maxInd = 0
+	for i = first, last do
+		if ind[i] and ind[i] > maxInd then
+			maxInd = ind[i]
+		end
+	end
+
+	local used = 0
+	local function put(level, l0, l1)
+		used += 1
+		if used > 400 then
+			return
+		end
+		local f = frames[used]
+		if not f then
+			f = new("Frame", { Name = "IndentGuide", BorderSizePixel = 0, ZIndex = 1 }, UI.editorScroll)
+			frames[used] = f
+		end
+		local isActive = level == activeLevel and activeLine >= l0 and activeLine <= l1
+		f.Visible = true
+		f.BackgroundColor3 = isActive and accent() or Color3.new(1, 1, 1)
+		f.BackgroundTransparency = isActive and 0.45 or 0.9
+		f.Position = UDim2.fromOffset(PAD_L + (level - 1) * tab * charW, PAD_T + (l0 - 1) * lineH)
+		f.Size = UDim2.fromOffset(1, (l1 - l0 + 1) * lineH)
+	end
+	for level = 1, math.floor((maxInd - 1) / tab) + 1 do
+		local col = (level - 1) * tab
+		local start
+		for i = first, last + 1 do
+			local ok = i <= last and ind[i] > col
+			if ok and not start then
+				start = i
+			elseif not ok and start then
+				put(level, start, i - 1)
+				start = nil
+			end
+		end
+	end
+	for i = math.min(used, 400) + 1, #frames do
+		frames[i].Visible = false
+	end
+end
+
+function IND.drawErrors()
+	local text = lastText
+	local starts = IND.getStarts()
+	for i = 1, 2 do
+		local m = IND.marks[i]
+		local underline, gutterMark = UI.errLines[i], UI.errGutter[i]
+		if m and settings.errorIndicators and m.line <= lineCount then
+			local s = starts[m.line]
+			local e = (starts[m.line + 1] or (#text + 2)) - 2
+			local lineText = text:sub(s, e)
+			local first = lineText:find("%S") or 1
+			local last = math.max(#lineText, first)
+			local color = m.primary and C.red or C.yellow
+			underline.Visible = true
+			underline.BackgroundColor3 = color
+			underline.BackgroundTransparency = m.primary and 0.1 or 0.45
+			underline.Position = UDim2.fromOffset(PAD_L + (first - 1) * charW, PAD_T + m.line * lineH - 2)
+			underline.Size = UDim2.fromOffset(math.max(charW * 2, (last - first + 1) * charW), 2)
+			gutterMark.Visible = true
+			gutterMark.BackgroundColor3 = color
+			gutterMark.Size = UDim2.fromOffset(3, lineH)
+		else
+			underline.Visible = false
+			gutterMark.Visible = false
+		end
+	end
+	syncGutter()
+end
+
+function IND.status(ln, col)
+	ln, col = ln or lastLn, col or lastCol
+	local left = string.format("Ln %d, Col %d", ln, col)
+	local a, b = UI.editorBox.SelectionStart, UI.editorBox.CursorPosition
+	local selecting = a ~= -1 and b ~= -1 and a ~= b
+	if selecting then
+		local chunk = lastText:sub(math.min(a, b), math.max(a, b) - 1)
+		local _, breaks = chunk:gsub("\n", "")
+		local extra = breaks > 0 and string.format(", %d lines", breaks + 1) or ""
+		local preview = (chunk:sub(1, 60):gsub("\n", "\\n"))
+		if #chunk > 60 then
+			preview = preview .. "..."
+		end
+		left = string.format('%s  (%d selected%s)  "%s"', left, #chunk, extra, preview)
+	end
+	UI.statusLeft.Text = left
+	UI.statusLeft.Size = UDim2.new(selecting and 0.7 or 0.3, 0, 1, 0)
+	UI.statusMid.Visible = not selecting
+	if UI.statusMidBtn then
+		UI.statusMidBtn.Visible = not selecting
+	end
+	if IND.errMsg and settings.errorIndicators then
+		if IND.errLine then
+			UI.statusMid.Text = string.format("Error Ln %d: %s", IND.errLine, IND.errMsg)
+		else
+			UI.statusMid.Text = "Error: " .. IND.errMsg
+		end
+		UI.statusMid.TextColor3 = C.red
+	else
+		UI.statusMid.Text = string.format("%d lines | %d chars", lineCount, #lastText)
+		UI.statusMid.TextColor3 = C.sub
+	end
+	local d = currentData()
+	local state = ""
+	if hasFS and d and scriptsLoaded then
+		state = d.dirty and "Unsaved | " or "Saved | "
+	end
+	UI.statusRight.Text = string.format("Spaces: %d | %sLua", settings.tabSize, state)
+end
+
+function IND.setError(line, msg, related)
+	IND.errLine, IND.errMsg = nil, msg
+	IND.marks = {}
+	if line then
+		line = math.clamp(line, 1, lineCount)
+		IND.errLine = line
+		IND.marks[1] = { line = line, primary = true }
+		if related and related ~= line and related >= 1 and related <= lineCount then
+			IND.marks[2] = { line = related, primary = false }
+		end
+	end
+	IND.drawErrors()
+	IND.status()
+end
+
+function IND.runLint()
+	local text = lastText
+	if not settings.errorIndicators or not scriptsLoaded or text == "" or #text > IND.LIMIT then
+		IND.setError(nil, nil)
+		return
+	end
+	local line, msg
+	local compiled = false
+	if loadstring then
+		local ok, fn, err = pcall(loadstring, text, "=bases")
+		if ok then
+			compiled = true
+			if not fn then
+				err = tostring(err or "Syntax error")
+				local l, m = err:match("^.-:(%d+):%s*(.*)$")
+				if l then
+					line, msg = tonumber(l), m
+				else
+					msg = err
+				end
+			end
+		end
+	end
+	if not compiled then
+		IND.ensureBrackets()
+		local e = IND.bErr
+		if e then
+			line = lineColOf(IND.getStarts(), e.pos)
+			msg = e.msg
+		end
+	end
+	local related
+	if msg then
+		msg = (msg:gsub("%s+", " "))
+		related = tonumber(msg:match("at line (%d+)"))
+	end
+	IND.setError(line, msg, related)
+end
+
+function IND.scheduleLint()
+	IND.lintToken += 1
+	local token = IND.lintToken
+	task.delay(0.6, function()
+		if token == IND.lintToken and running then
+			IND.runLint()
+		end
+	end)
+end
+
+function IND.caretActive()
+	return UI.editorBox:IsFocused() and UI.highlighter.Visible and UI.editorBox.CursorPosition >= 1
+end
+
+function IND.layoutCaret()
+	local c = UI.caret
+	if not IND.caretActive() then
+		c.Visible = false
+		IND.caretFocused = false
+		return
+	end
+	IND.caretFocused = true
+	IND.caretReset = os.clock()
+	c.Position = UDim2.fromOffset(PAD_L + (lastCol - 1) * charW - 1, PAD_T + (lastLn - 1) * lineH)
+	c.Size = UDim2.fromOffset(2, lineH)
+	c.Visible = true
+end
+
+function IND.blink()
+	local c = UI.caret
+	if not IND.caretActive() then
+		if c.Visible then
+			c.Visible = false
+		end
+		IND.caretFocused = false
+		return
+	end
+	if not IND.caretFocused then
+		cursorLineCol()
+		IND.layoutCaret()
+		return
+	end
+	local on = true
+	if settings.caretBlink then
+		on = ((os.clock() - (IND.caretReset or 0)) % 1.06) < 0.53
+	end
+	if c.Visible ~= on then
+		c.Visible = on
+	end
+end
+
+function IND.drawSelection()
+	local frames = IND.selFrames
+	local a, b = UI.editorBox.SelectionStart, UI.editorBox.CursorPosition
+	if a == -1 or b == -1 or a == b or not UI.highlighter.Visible then
+		for _, f in ipairs(frames) do
+			f.Visible = false
+		end
+		return
+	end
+	local text = lastText
+	local lo, hi = math.min(a, b), math.min(math.max(a, b), #text + 1)
+	local starts = IND.getStarts()
+	local l1, c1 = lineColOf(starts, lo)
+	local l2, c2 = lineColOf(starts, hi)
+	local lastLine = l2
+	if c2 == 0 and l2 > l1 then
+		lastLine = l2 - 1
+	end
+	local sc = UI.editorScroll
+	local viewH = sc.AbsoluteSize.Y / (UI.scaleValue or 1)
+	if viewH < 50 then
+		viewH = settings.editorHeight
+	end
+	local top = sc.CanvasPosition.Y
+	local first = math.max(1, math.floor((top - PAD_T) / lineH) + 1)
+	local last = math.min(lineCount, math.ceil((top + viewH - PAD_T) / lineH) + 1)
+	local used = 0
+	for line = math.max(l1, first), math.min(lastLine, last) do
+		local s = starts[line]
+		local e = (starts[line + 1] or (#text + 2)) - 2
+		local len = e - s + 1
+		local x0 = line == l1 and c1 or 0
+		local x1 = line == l2 and c2 or len + 1
+		if x1 > x0 then
+			used += 1
+			local f = frames[used]
+			if not f then
+				f = new("Frame", { Name = "SelectionBlock", BorderSizePixel = 0, ZIndex = 1 }, UI.editorScroll)
+				frames[used] = f
+			end
+			f.Visible = true
+			f.BackgroundColor3 = accent()
+			f.BackgroundTransparency = 0.6
+			f.Position = UDim2.fromOffset(PAD_L + x0 * charW, PAD_T + (line - 1) * lineH)
+			f.Size = UDim2.fromOffset((x1 - x0) * charW, lineH)
+		end
+	end
+	for i = used + 1, #frames do
+		frames[i].Visible = false
+	end
+end
+
+function IND.update(ln)
+	ln = ln or lastLn
+	IND.layoutBars(ln)
+	IND.layoutCaret()
+	IND.drawSelection()
+	IND.drawBrackets()
+	IND.drawGuides()
+	local owner = currentData()
+	if IND.lintOwner ~= owner then
+		IND.lintOwner = owner
+		IND.lintText = nil
+		if IND.errMsg or #IND.marks > 0 then
+			IND.setError(nil, nil)
+		end
+	end
+	if settings.errorIndicators and IND.lintText ~= lastText then
+		IND.lintText = lastText
+		IND.scheduleLint()
+	end
+end
+
+UI.editorScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+	IND.drawGuides()
+	IND.drawSelection()
+end)
+
+UI.editorBox:GetPropertyChangedSignal("SelectionStart"):Connect(function()
+	IND.drawSelection()
+	IND.status()
+end)
+
+UI.statusMidBtn = new("TextButton", {
+	Name = "StatusErrorButton",
+	Size = UDim2.new(0.4, 0, 1, 0),
+	Position = UDim2.new(0.3, 0, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	AutoButtonColor = false,
+	ZIndex = 2,
+}, UI.statusBar)
+UI.statusMidBtn.MouseButton1Click:Connect(function()
+	if not IND.errLine then
+		return
+	end
+	local pos = IND.getStarts()[IND.errLine]
+	if not pos then
+		return
+	end
+	UI.editorBox:CaptureFocus()
+	task.defer(function()
+		UI.editorBox.CursorPosition = pos
+		ensureVisible(PAD_L, PAD_T + (IND.errLine - 1) * lineH)
+	end)
+end)
+
+task.spawn(function()
+	while running do
+		task.wait(0.7)
+		if running and UI.statusBar.Visible then
+			IND.status()
+		end
+	end
+end)
+
+task.spawn(function()
+	while running do
+		task.wait(0.08)
+		if running then
+			IND.blink()
+		end
+	end
+end)
+
+function drawMatches()
+	local starts = buildLineStarts(lastText)
+	local drawn = 0
+	for i, m in ipairs(matches) do
+		if i <= 300 or i == matchIdx then
+			drawn += 1
+			local f = matchPool[drawn]
+			if not f then
+				f = new("Frame", { BorderSizePixel = 0, ZIndex = 1 }, UI.editorScroll)
+				matchPool[drawn] = f
+			end
+			local line, col = lineColOf(starts, m[1])
+			f.Visible = true
+			f.Position = UDim2.fromOffset(PAD_L + col * charW, PAD_T + (line - 1) * lineH)
+			f.Size = UDim2.fromOffset(math.max(charW, (m[2] - m[1] + 1) * charW), lineH)
+			if i == matchIdx then
+				f.BackgroundColor3 = accent()
+				f.BackgroundTransparency = 0.35
+			else
+				f.BackgroundColor3 = Color3.fromRGB(255, 200, 60)
+				f.BackgroundTransparency = 0.75
+			end
+		end
+	end
+	hideMatchFrames(drawn + 1)
+end
+
+local function goToMatch(i)
+	if #matches == 0 then
+		return
+	end
+	matchIdx = ((i - 1) % #matches) + 1
+	drawMatches()
+	UI.countLabel.Text = matchIdx .. "/" .. #matches
+	local starts = buildLineStarts(lastText)
+	local m = matches[matchIdx]
+	local line, col = lineColOf(starts, m[1])
+	ensureVisible(PAD_L + col * charW, PAD_T + (line - 1) * lineH, (m[2] - m[1] + 1) * charW)
+end
+
+runFind = function(keepIdx)
+	local q = UI.findBox.Text
+	matches = {}
+	if q == "" then
+		UI.countLabel.Text = ""
+		hideMatchFrames(1)
+		return
+	end
+	local hay, needle = lastText, q
+	if not caseSensitive then
+		hay, needle = hay:lower(), needle:lower()
+	end
+	local init = 1
+	while #matches < 2000 do
+		local s, e = hay:find(needle, init, true)
+		if not s then
+			break
+		end
+		matches[#matches + 1] = { s, e }
+		init = e + 1
+	end
+	if #matches == 0 then
+		matchIdx = 0
+		UI.countLabel.Text = "0/0"
+		hideMatchFrames(1)
+		return
+	end
+	if not keepIdx or matchIdx < 1 or matchIdx > #matches then
+		matchIdx = 1
+		local cur = math.max(UI.editorBox.CursorPosition, 1)
+		for i, m in ipairs(matches) do
+			if m[1] >= cur then
+				matchIdx = i
+				break
+			end
+		end
+	end
+	drawMatches()
+	UI.countLabel.Text = matchIdx .. "/" .. #matches
+	if not keepIdx then
+		goToMatch(matchIdx)
+	end
+end
+
+function openFind()
+	findOpen = true
+	UI.findBar.Visible = true
+	local a, b = UI.editorBox.SelectionStart, UI.editorBox.CursorPosition
+	if a ~= -1 and b ~= -1 and a ~= b then
+		local s = lastText:sub(math.min(a, b), math.max(a, b) - 1)
+		if #s > 0 and #s < 100 and not s:find("\n") then
+			UI.findBox.Text = s
+		end
+	end
+	runFind(false)
+	task.defer(function()
+		UI.findBox:CaptureFocus()
+	end)
+end
+local function closeFind()
+	findOpen = false
+	UI.findBar.Visible = false
+	matches = {}
+	hideMatchFrames(1)
+end
+
+UI.findBox:GetPropertyChangedSignal("Text"):Connect(function()
+	if findOpen then
+		runFind(false)
+	end
+end)
+UI.findBox.FocusLost:Connect(function(enter)
+	if enter then
+		goToMatch(matchIdx + 1)
+	end
+end)
+UI.nextBtn.MouseButton1Click:Connect(function()
+	goToMatch(matchIdx + 1)
+end)
+UI.prevBtn.MouseButton1Click:Connect(function()
+	goToMatch(matchIdx - 1)
+end)
+UI.findCloseBtn.MouseButton1Click:Connect(closeFind)
+UI.caseBtn.MouseButton1Click:Connect(function()
+	caseSensitive = not caseSensitive
+	UI.caseBtn.TextColor3 = caseSensitive and accent() or C.text
+	runFind(false)
+end)
+UI.replaceBtn.MouseButton1Click:Connect(function()
+	local m = matches[matchIdx]
+	if not m then
+		return
+	end
+	local rep = UI.replaceBox.Text
+	commitEdit(lastText:sub(1, m[1] - 1) .. rep .. lastText:sub(m[2] + 1), m[1] + #rep)
+end)
+UI.replaceAllBtn.MouseButton1Click:Connect(function()
+	if #matches == 0 then
+		return
+	end
+	local rep, text, count = UI.replaceBox.Text, lastText, #matches
+	for i = #matches, 1, -1 do
+		local m = matches[i]
+		text = text:sub(1, m[1] - 1) .. rep .. text:sub(m[2] + 1)
+	end
+	commitEdit(text, 1)
+	notify("Replaced " .. count .. " occurrence(s)", "success")
+end)
+
+
+function renderScriptTabs() end
+
+function loadTab(i)
+	local d = scriptData[i]
+	local owner = UI.viewOwner
+	if owner and owner ~= d and scriptsLoaded then
+		owner.ln, owner.col = lastLn, lastCol
+		owner.sx, owner.sy = UI.editorScroll.CanvasPosition.X, UI.editorScroll.CanvasPosition.Y
+	end
+	UI.viewOwner = d
+	activeTabIndex = i
+	d.source = normalize(d.source)
+	lastText = d.source
+	UI.editorBox.Text = d.source
+	local _, breaks = d.source:gsub("\n", "")
+	lastLn = math.clamp(d.ln or 1, 1, breaks + 1)
+	lastCol = math.max(d.col or 1, 1)
+	histOf(d)
+	refreshEditor()
+	UI.editorScroll.CanvasPosition = Vector2.new(d.sx or 0, d.sy or 0)
+	if findOpen then
+		runFind(false)
+	end
+	renderScriptTabs()
+end
+
+function saveTabOrder()
+	if not scriptsLoaded then
+		return
+	end
+	local names = {}
+	for i, d in ipairs(scriptData) do
+		names[i] = d.name
+	end
+	setSetting("tabOrder", names)
+end
+
+local function moveTab(dir)
+	if not scriptsLoaded then
+		notify("Scripts are still loading", "warn")
+		return
+	end
+	local i = activeTabIndex
+	local j = i + dir
+	if j < 1 or j > #scriptData then
+		return
+	end
+	scriptData[i], scriptData[j] = scriptData[j], scriptData[i]
+	activeTabIndex = j
+	saveTabOrder()
+	renderScriptTabs()
+end
+
+local function renameTab(i, raw)
+	local d = scriptData[i]
+	if not d then
+		return
+	end
+	local newName = uniqueName(sanitize(raw), i)
+	if newName ~= d.name then
+		local old = d.name
+		d.name = newName
+		if hasFS and scriptsLoaded then
+			pcall(writefile, scriptPath(newName), d.source)
+			if old:lower() ~= newName:lower() then
+				pcall(delfile, scriptPath(old))
+			end
+			d.dirty = false
+		elseif hasFS then
+			d.dirty = true
+		end
+		saveTabOrder()
+	end
+	renderScriptTabs()
+end
+
+local tabRenderToken = 0
+UI.tabDrag = { active = false, moved = false, startX = 0, startPos = 0 }
+local function tabScrollBy(dx)
+	local sc = UI.scriptTabScroll
+	sc.CanvasPosition = Vector2.new(math.max(0, sc.CanvasPosition.X + dx), 0)
+end
+UI.tabScrollBy = tabScrollBy
+local function overTabStrip()
+	local ok, inside = pcall(function()
+		local mouse = userInputService:GetMouseLocation() - guiService:GetGuiInset()
+		local sc = UI.scriptTabScroll
+		local pos, size = sc.AbsolutePosition, sc.AbsoluteSize
+		return mouse.X >= pos.X and mouse.X <= pos.X + size.X and mouse.Y >= pos.Y and mouse.Y <= pos.Y + size.Y
+	end)
+	return ok and inside == true
+end
+function UI.tabDrag.begin(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		local drag = UI.tabDrag
+		drag.active = true
+		drag.moved = false
+		drag.startX = input.Position.X
+		drag.startPos = UI.scriptTabScroll.CanvasPosition.X
+	end
+end
+track(userInputService.InputChanged:Connect(function(input)
+	local drag = UI.tabDrag
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		if UI.executorPage.Visible and UI.content.Visible and overTabStrip() then
+			tabScrollBy(-input.Position.Z * 90)
+		end
+	elseif drag.active and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local dx = input.Position.X - drag.startX
+		if math.abs(dx) > 5 then
+			drag.moved = true
+		end
+		if drag.moved then
+			UI.scriptTabScroll.CanvasPosition = Vector2.new(math.max(0, drag.startPos - dx / (UI.scaleValue or 1)), 0)
+		end
+	end
+end))
+track(userInputService.InputEnded:Connect(function(input)
+	local drag = UI.tabDrag
+	if input.UserInputType == Enum.UserInputType.MouseButton1 and drag.active then
+		drag.active = false
+		if drag.moved then
+			task.delay(0.15, function()
+				drag.moved = false
+			end)
+		end
+	end
+end))
+UI.scriptTabScroll.InputBegan:Connect(UI.tabDrag.begin)
+local function holdScroll(btn, dir)
+	local token = 0
+	local function stop()
+		token = token + 1
+	end
+	btn.MouseButton1Down:Connect(function()
+		token = token + 1
+		local mine = token
+		tabScrollBy(dir * 140)
+		task.spawn(function()
+			task.wait(0.35)
+			while running and token == mine do
+				tabScrollBy(dir * 45)
+				task.wait(0.03)
+			end
+		end)
+	end)
+	btn.MouseButton1Up:Connect(stop)
+	btn.MouseLeave:Connect(stop)
+end
+holdScroll(UI.tabScrollLeftBtn, -1)
+holdScroll(UI.tabScrollRightBtn, 1)
+
+renderScriptTabs = function()
+	tabRenderToken += 1
+	local token = tabRenderToken
+	for _, child in ipairs(UI.scriptTabScroll:GetChildren()) do
+		if child:IsA("TextButton") or child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+	if not scriptsLoaded then
+		new("TextLabel", {
+			Name = "LoadingLabel",
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 0, 32),
+			BackgroundTransparency = 1,
+			Text = "Loading scripts...",
+			TextColor3 = C.sub,
+			TextSize = 14,
+			FontFace = sans(),
+			LayoutOrder = 1,
+		}, UI.scriptTabScroll)
+		return
+	end
+	local activeBtn
+	for i, data in ipairs(scriptData) do
+		local active = i == activeTabIndex
+		local tBtn = new("TextButton", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 0, 32),
+			BackgroundColor3 = active and accent() or C.dim,
+			BackgroundTransparency = 0.6,
+			Text = "",
+			AutoButtonColor = false,
+			ClipsDescendants = true,
+			LayoutOrder = i,
+		}, UI.scriptTabScroll)
+		corner(tBtn, 6)
+		new("UISizeConstraint", { MinSize = Vector2.new(64, 32), MaxSize = Vector2.new(260, 32) }, tBtn)
+		local holder = new("Frame", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+		}, tBtn)
+		new("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, holder)
+		padding(holder, 0, 14, 0, 14)
+		if active then
+			activeBtn = tBtn
+			local nameBox = new("TextBox", {
+				AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.new(0, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text = data.name,
+				TextColor3 = C.text,
+				TextSize = 14,
+				FontFace = sans(),
+				ClearTextOnFocus = false,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			}, holder)
+			new("UISizeConstraint", { MinSize = Vector2.new(36, 0), MaxSize = Vector2.new(232, 32) }, nameBox)
+			nameBox.FocusLost:Connect(function()
+				renameTab(i, nameBox.Text)
+			end)
+		else
+			local label = new("TextLabel", {
+				AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.new(0, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text = data.name,
+				TextColor3 = C.sub,
+				TextSize = 14,
+				FontFace = sans(),
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			}, holder)
+			new("UISizeConstraint", { MinSize = Vector2.new(36, 0), MaxSize = Vector2.new(232, 32) }, label)
+		end
+		tBtn.MouseButton1Click:Connect(function()
+			if UI.tabDrag.moved then
+				return
+			end
+			if i ~= activeTabIndex then
+				loadTab(i)
+			end
+		end)
+		tBtn.InputBegan:Connect(UI.tabDrag.begin)
+	end
+	task.spawn(function()
+		task.wait()
+		task.wait()
+		if token ~= tabRenderToken or not activeBtn or not activeBtn.Parent then
+			return
+		end
+		local sc = UI.scriptTabScroll
+		local scale = UI.scaleValue or 1
+		local pos, w = sc.CanvasPosition.X, sc.AbsoluteSize.X / scale
+		local x = (activeBtn.AbsolutePosition.X - sc.AbsolutePosition.X) / scale + pos
+		local bw = activeBtn.AbsoluteSize.X / scale
+		if x < pos then
+			sc.CanvasPosition = Vector2.new(math.max(0, x - 8), 0)
+		elseif w > 0 and x + bw > pos + w then
+			sc.CanvasPosition = Vector2.new(x + bw - w + 8, 0)
+		end
+	end)
+end
+
+function addTab(name, source)
+	if not scriptsLoaded then
+		notify("Scripts are still loading", "warn")
+		return
+	end
+	local base = sanitize(name or ("Script " .. (#scriptData + 1)))
+	local d = { name = uniqueName(base), source = normalize(source or ""), dirty = true }
+	table.insert(scriptData, d)
+	if hasFS and scriptsLoaded then
+		pcall(writefile, scriptPath(d.name), d.source)
+		d.dirty = false
+	end
+	saveTabOrder()
+	loadTab(#scriptData)
+end
+
+UI.addTabBtn.MouseButton1Click:Connect(function()
+	addTab(nil, "")
+end)
+
+UI.moveLeftBtn.MouseButton1Click:Connect(function()
+	moveTab(-1)
+end)
+UI.moveRightBtn.MouseButton1Click:Connect(function()
+	moveTab(1)
+end)
+
+local delToken = 0
+local function resetDelBtn()
+	UI.delTabBtn.BackgroundColor3 = C.card
+	UI.delTabBtn.BackgroundTransparency = 0.6
+end
+UI.delTabBtn.MouseButton1Click:Connect(function()
+	if not scriptsLoaded then
+		notify("Scripts are still loading", "warn")
+		return
+	end
+	local d = currentData()
+	if not d then
+		return
+	end
+	if settings.confirmDelete and UI.delTabBtn.BackgroundColor3 ~= C.red then
+		UI.delTabBtn.BackgroundColor3 = C.red
+		UI.delTabBtn.BackgroundTransparency = 0.3
+		notify("Click delete again to remove '" .. d.name .. "'", "warn")
+		delToken += 1
+		local token = delToken
+		task.delay(2.5, function()
+			if token == delToken then
+				resetDelBtn()
+			end
+		end)
+		return
+	end
+	delToken += 1
+	resetDelBtn()
+	if hasFS and scriptsLoaded then
+		pcall(delfile, scriptPath(d.name))
+	end
+	table.remove(scriptData, activeTabIndex)
+	if #scriptData == 0 then
+		table.insert(scriptData, { name = "Script 1", source = "", dirty = true })
+	end
+	saveTabOrder()
+	loadTab(math.max(1, activeTabIndex - 1))
+end)
+
+function execute()
+	local d = currentData()
+	runSource(lastText, d and d.name or "script")
+end
+UI.executeBtn.MouseButton1Click:Connect(execute)
+UI.clearBtn.MouseButton1Click:Connect(function()
+	commitEdit("", 1)
+end)
+UI.copyBtn.MouseButton1Click:Connect(function()
+	if setclipboard then
+		pcall(setclipboard, lastText)
+		notify("Copied to clipboard", "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end)
+UI.saveBtn.MouseButton1Click:Connect(function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	local n = saveDirty(true)
+	notify("Saved " .. n .. " script(s)", "success")
+end)
+UI.undoBtn.MouseButton1Click:Connect(undo)
+UI.redoBtn.MouseButton1Click:Connect(redo)
+UI.findBtn.MouseButton1Click:Connect(function()
+	if findOpen then
+		closeFind()
+	else
+		openFind()
+	end
+end)
+
+local caret = { cursor = nil, sel = -1, text = nil }
+local function trackCaret()
+	local c, s = UI.editorBox.CursorPosition, UI.editorBox.SelectionStart
+	if c >= 1 then
+		caret.cursor, caret.sel = c, s
+		if s ~= -1 and s ~= c then
+			caret.text = lastText:sub(math.min(c, s), math.max(c, s) - 1)
+		else
+			caret.text = nil
+		end
+	end
+end
+UI.editorBox:GetPropertyChangedSignal("CursorPosition"):Connect(trackCaret)
+UI.editorBox:GetPropertyChangedSignal("SelectionStart"):Connect(trackCaret)
+
+local function insertText(str)
+	local c = caret.cursor or (#lastText + 1)
+	local s = caret.sel
+	local a, b = c, c
+	if s and s ~= -1 and s ~= c then
+		a, b = math.min(c, s), math.max(c, s)
+	end
+	commitEdit(lastText:sub(1, a - 1) .. str .. lastText:sub(b), a + #str)
+end
+
+local function formatCode(text)
+	local size = settings.tabSize
+	local out, stack = {}, {}
+	local longClose
+	local lineNo = 0
+	local function distinct()
+		local n, last = 0, nil
+		for _, l in ipairs(stack) do
+			if l ~= last then
+				n += 1
+				last = l
+			end
+		end
+		return n
+	end
+	for line in (text .. "\n"):gmatch("(.-)\n") do
+		lineNo += 1
+		if longClose then
+			out[#out + 1] = line
+			if line:find(longClose, 1, true) then
+				longClose = nil
+			end
+		else
+			local trimmed = line:match("^%s*(.-)%s*$")
+			local noStr = trimmed:gsub('"[^"]*"', '""'):gsub("'[^']*'", "''")
+			local eq = noStr:match("%[(=*)%[")
+			if eq then
+				local s = noStr:find("%[" .. eq .. "%[")
+				if not noStr:find("]" .. eq .. "]", s + #eq + 2, true) then
+					longClose = "]" .. eq .. "]"
+				end
+			end
+			local code = noStr:gsub("%-%-.*$", "")
+			code = code:gsub("%[=*%[.*$", "")
+			local indent
+			local function settle()
+				if indent == nil then
+					indent = distinct()
+				end
+			end
+			local i = 1
+			while i <= #code do
+				local ch = code:sub(i, i)
+				if ch:match("[%w_]") then
+					local word = code:match("^[%w_]+", i)
+					i += #word
+					if word == "end" or word == "until" then
+						table.remove(stack)
+					elseif word == "else" or word == "elseif" then
+						table.remove(stack)
+						settle()
+						if word == "else" then
+							table.insert(stack, lineNo)
+						end
+					elseif word == "function" or word == "do" or word == "then" or word == "repeat" then
+						settle()
+						table.insert(stack, lineNo)
+					else
+						settle()
+					end
+				elseif ch == "(" or ch == "{" then
+					settle()
+					table.insert(stack, lineNo)
+					i += 1
+				elseif ch == ")" or ch == "}" then
+					table.remove(stack)
+					i += 1
+				else
+					if not ch:match("%s") then
+						settle()
+					end
+					i += 1
+				end
+			end
+			settle()
+			if trimmed == "" then
+				out[#out + 1] = ""
+			else
+				out[#out + 1] = string.rep(" ", size * indent) .. trimmed
+			end
+		end
+	end
+	return table.concat(out, "\n")
+end
+
+UI.runSelBtn.MouseButton1Click:Connect(function()
+	local sel = caret.text
+	if sel and sel:match("%S") then
+		runSource(sel, "selection")
+	else
+		notify("Select some code in the editor first", "warn")
+	end
+end)
+UI.pasteBtn.MouseButton1Click:Connect(function()
+	if not getclipboard then
+		notify("getclipboard is not supported by your executor", "warn")
+		return
+	end
+	local ok, clip = pcall(getclipboard)
+	if ok and type(clip) == "string" and clip ~= "" then
+		insertText(normalize(clip))
+	else
+		notify("Clipboard is empty", "warn")
+	end
+end)
+UI.dupBtn.MouseButton1Click:Connect(function()
+	local d = currentData()
+	addTab((d and d.name or "Script") .. " copy", lastText)
+end)
+UI.pinBtn.MouseButton1Click:Connect(function()
+	local d = currentData()
+	if not d or not lastText:match("%S") then
+		notify("Nothing to pin", "warn")
+		return
+	end
+	local list = settings.pinned
+	table.insert(list, { name = d.name, source = lastText })
+	setSetting("pinned", list)
+	rebuildQuick()
+	notify("Pinned '" .. d.name .. "' to Quick Scripts. Right-click a pinned tile to remove it.", "success")
+end)
+UI.formatBtn.MouseButton1Click:Connect(function()
+	local ok, res = pcall(formatCode, lastText)
+	if ok and type(res) == "string" then
+		commitEdit(res, math.min(caret.cursor or 1, #res + 1))
+		notify("Script re-indented", "success")
+	else
+		notify("Could not format this script", "error")
+	end
+end)
+
+local function fetchUrl(url)
+	url = url:match("^%s*(.-)%s*$")
+	if url == "" then
+		notify("Enter a script URL first", "warn")
+		return nil
+	end
+	if not url:match("^https?://") then
+		url = "https://" .. url
+	end
+	local ok, res = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if not ok or type(res) ~= "string" or res == "" then
+		notify("Could not download that URL", "error")
+		return nil
+	end
+	return res
+end
+local function runUrl()
+	task.spawn(function()
+		local src = fetchUrl(UI.urlBox.Text)
+		if src then
+			runSource(src, "URL script")
+		end
+	end)
+end
+UI.urlRunBtn.MouseButton1Click:Connect(runUrl)
+UI.urlBox.FocusLost:Connect(function(enter)
+	if enter then
+		runUrl()
+	end
+end)
+UI.urlLoadBtn.MouseButton1Click:Connect(function()
+	task.spawn(function()
+		local src = fetchUrl(UI.urlBox.Text)
+		if src then
+			addTab("URL script", src)
+		end
+	end)
+end)
+
+UI.scriptHubPage = new("Frame", { Name = "ScriptHubPage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+
+UI.searchContainer = new("Frame", {
+	Name = "SearchContainer",
+	Size = UDim2.new(1, -328, 0, 44),
+	Position = UDim2.new(0, 24, 0, 16),
+	BackgroundColor3 = C.card,
+}, UI.scriptHubPage)
+corner(UI.searchContainer, 8)
+new("TextLabel", {
+	Size = UDim2.new(0, 44, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "magnifying-glass",
+	TextColor3 = C.sub,
+	TextSize = 20,
+	FontFace = ICON_FONT,
+}, UI.searchContainer)
+UI.searchBox = new("TextBox", {
+	Size = UDim2.new(1, -56, 1, 0),
+	Position = UDim2.new(0, 44, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	PlaceholderText = "Search Scripts...",
+	PlaceholderColor3 = C.sub,
+	TextColor3 = C.text,
+	TextSize = 16,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+}, UI.searchContainer)
+
+UI.hub = {
+	sorts = {
+		{ name = "Default", params = "" },
+		{ name = "Updated", params = "&sortBy=updatedAt&order=desc" },
+		{ name = "Newest", params = "&sortBy=createdAt&order=desc" },
+		{ name = "Oldest", params = "&sortBy=createdAt&order=asc" },
+		{ name = "Most Viewed", params = "&sortBy=views&order=desc" },
+		{ name = "Most Liked", params = "&sortBy=likeCount&order=desc" },
+	},
+	game = { name = nil, search = nil },
+}
+
+function UI.hub.sort()
+	return UI.hub.sorts[settings.hubSort] or UI.hub.sorts[1]
+end
+
+function UI.hub.clean(name)
+	local s = tostring(name or "")
+	s = s:gsub("%b[]", " "):gsub("%b()", " "):gsub("[^%w%s'%-]", " "):gsub("%s+", " ")
+	s = s:match("^%s*(.-)%s*$") or ""
+	local words = {}
+	for w in s:gmatch("%S+") do
+		words[#words + 1] = w
+		if #words >= 5 then
+			break
+		end
+	end
+	return table.concat(words, " ")
+end
+
+function UI.hub.norm(name)
+	return (tostring(name or ""):lower():gsub("[^%w]", ""))
+end
+
+function UI.hub.gameName()
+	local G = UI.hub.game
+	if G.name then
+		return G.name
+	end
+	local ok, product = pcall(function()
+		return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+	end)
+	if ok and type(product) == "table" and type(product.Name) == "string" and product.Name ~= "" then
+		G.name = product.Name
+		return G.name
+	end
+	return tostring(game.Name)
+end
+
+function UI.hub.searchName()
+	local name = UI.hub.gameName()
+	local cleaned = UI.hub.clean(name)
+	if cleaned == "" then
+		cleaned = name
+	end
+	return cleaned
+end
+
+function UI.hub.matches(s)
+	local g = type(s) == "table" and s.game
+	if type(g) ~= "table" then
+		return false
+	end
+	if tostring(g.gameId) == tostring(game.PlaceId) then
+		return true
+	end
+	local a = UI.hub.norm(g.name)
+	local b = UI.hub.norm(UI.hub.gameName())
+	if #a < 3 or #b < 3 then
+		return false
+	end
+	return a == b or a:find(b, 1, true) ~= nil or b:find(a, 1, true) ~= nil
+end
+
+UI.hub.sortBtn = new("TextButton", {
+	Name = "SortButton",
+	Size = UDim2.new(0, 220, 0, 44),
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -76, 0, 16),
+	BackgroundColor3 = C.card,
+	AutoButtonColor = false,
+	Text = "",
+}, UI.scriptHubPage)
+corner(UI.hub.sortBtn, 8)
+UI.hub.sortIcon = newIcon(UI.hub.sortBtn, { "dual-arrows-vertical", "two-arrows-down-and-up" }, false, 18, C.sub)
+UI.hub.sortIcon.AnchorPoint = Vector2.new(0, 0.5)
+UI.hub.sortIcon.Position = UDim2.new(0, 14, 0.5, 0)
+UI.hub.sortLabel = new("TextLabel", {
+	Name = "SortLabel",
+	Size = UDim2.new(1, -70, 1, 0),
+	Position = UDim2.new(0, 42, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.text,
+	TextSize = 14,
+	FontFace = sans(),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.hub.sortBtn)
+UI.hub.sortChevron = newIcon(UI.hub.sortBtn, { "chevron-small-down" }, false, 16, C.sub)
+UI.hub.sortChevron.AnchorPoint = Vector2.new(1, 0.5)
+UI.hub.sortChevron.Position = UDim2.new(1, -12, 0.5, 0)
+UI.hub.sortBtn.MouseEnter:Connect(function()
+	tweenService:Create(UI.hub.sortBtn, TweenInfo.new(0.15), { BackgroundColor3 = lighten(C.card) }):Play()
+end)
+UI.hub.sortBtn.MouseLeave:Connect(function()
+	tweenService:Create(UI.hub.sortBtn, TweenInfo.new(0.15), { BackgroundColor3 = C.card }):Play()
+end)
+
+UI.hub.refreshBtn = new("TextButton", {
+	Name = "RefreshButton",
+	Size = UDim2.new(0, 44, 0, 44),
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -24, 0, 16),
+	BackgroundColor3 = C.card,
+	AutoButtonColor = false,
+	Text = "",
+}, UI.scriptHubPage)
+corner(UI.hub.refreshBtn, 8)
+UI.hub.refreshIcon = newIcon(UI.hub.refreshBtn, { "arrow-rotate-right", "arrow-spin-clockwise" }, false, 20, C.text)
+UI.hub.refreshIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+UI.hub.refreshIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+UI.hub.refreshBtn.MouseEnter:Connect(function()
+	tweenService:Create(UI.hub.refreshBtn, TweenInfo.new(0.15), { BackgroundColor3 = lighten(C.card) }):Play()
+end)
+UI.hub.refreshBtn.MouseLeave:Connect(function()
+	tweenService:Create(UI.hub.refreshBtn, TweenInfo.new(0.15), { BackgroundColor3 = C.card }):Play()
+end)
+
+function UI.hub.refreshSort()
+	UI.hub.sortLabel.Text = "Sort by: " .. UI.hub.sort().name
+	local on = settings.hubSort > 1
+	UI.hub.sortIcon.TextColor3 = on and accent() or C.sub
+end
+
+UI.hubCats = new("ScrollingFrame", {
+	Name = "HubCategories",
+	Size = UDim2.new(1, -48, 0, 34),
+	Position = UDim2.new(0, 24, 0, 68),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+}, UI.scriptHubPage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, UI.hubCats)
+UI.hubScroll = new("ScrollingFrame", {
+	Name = "HubScroll",
+	Size = UDim2.new(1, 0, 1, -112),
+	Position = UDim2.new(0, 0, 0, 112),
+	BackgroundTransparency = 1,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.scriptHubPage)
+new("UIGridLayout", { CellSize = UDim2.new(0, 254, 0, 260), CellPadding = UDim2.new(0, 16, 0, 16), SortOrder = Enum.SortOrder.LayoutOrder }, UI.hubScroll)
+padding(UI.hubScroll, 8, 24, 24, 24)
+
+UI.hubStatus = new("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 30),
+	Position = UDim2.new(0, 0, 0, 140),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 16,
+	FontFace = sans(),
+}, UI.scriptHubPage)
+
+hubRequest, hubLoaded, lastQuery = 0, false, ""
+
+UI.hubMore = { cell = nil, state = "ready", loaded = 0, page = 1, seen = {} }
+
+function UI.hubMore.remove()
+	local M = UI.hubMore
+	if M.cell then
+		pcall(function()
+			M.cell:Destroy()
+		end)
+		M.cell = nil
+	end
+end
+
+function UI.hubMore.show(state)
+	local M = UI.hubMore
+	M.state = state
+	if not M.cell or not M.cell.Parent then
+		local cell = new("Frame", {
+			Name = "ShowMore",
+			BackgroundColor3 = C.card,
+			BackgroundTransparency = 0.45,
+			BorderSizePixel = 0,
+			LayoutOrder = 1000000,
+		}, UI.hubScroll)
+		corner(cell, 8)
+		new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.82, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, cell)
+		M.icon = newIcon(cell, { "plus-small" }, false, 34, C.text)
+		M.icon.AnchorPoint = Vector2.new(0.5, 0.5)
+		M.icon.Position = UDim2.new(0.5, 0, 0.5, -34)
+		M.title = new("TextLabel", {
+			Name = "Title",
+			Size = UDim2.new(1, -24, 0, 24),
+			Position = UDim2.new(0, 12, 0.5, -8),
+			BackgroundTransparency = 1,
+			TextColor3 = C.text,
+			TextSize = 17,
+			FontFace = sans(),
+		}, cell)
+		M.sub = new("TextLabel", {
+			Name = "Sub",
+			Size = UDim2.new(1, -24, 0, 20),
+			Position = UDim2.new(0, 12, 0.5, 18),
+			BackgroundTransparency = 1,
+			TextColor3 = C.sub,
+			TextSize = 13,
+			FontFace = sans(Enum.FontWeight.Regular),
+		}, cell)
+		M.button = new("TextButton", {
+			Name = "ShowMoreButton",
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Text = "",
+			ZIndex = 5,
+		}, cell)
+		M.button.MouseEnter:Connect(function()
+			cell.BackgroundTransparency = 0.2
+		end)
+		M.button.MouseLeave:Connect(function()
+			cell.BackgroundTransparency = 0.45
+		end)
+		M.button.MouseButton1Click:Connect(function()
+			UI.hubMore.load()
+		end)
+		M.cell = cell
+	end
+	if state == "loading" then
+		M.title.Text = "Loading..."
+		M.sub.Text = "Page " .. (M.page + 1)
+	elseif state == "retry" then
+		M.title.Text = "Retry"
+		M.sub.Text = "Could not load page " .. (M.page + 1)
+	else
+		M.title.Text = "Show more"
+		M.sub.Text = "Loaded " .. M.loaded .. " scripts"
+	end
+end
+
+
+local function clearHub()
+	UI.hubMore.cell = nil
+	pruneAccent()
+	for _, child in ipairs(UI.hubScroll:GetChildren()) do
+		if child:IsA("Frame") then
+			child:Destroy()
+		end
+	end
+end
+
+local function createScriptTile(titleText, descText, gameId, imgUrl, scriptSource, info)
+	info = type(info) == "table" and info or { title = titleText, script = scriptSource, game = { name = descText, gameId = gameId } }
+	local tile = new("Frame", { BackgroundColor3 = C.card, BorderSizePixel = 0 })
+	corner(tile, 8)
+
+	local mediaWrapper = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 120),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, tile)
+	corner(mediaWrapper, 8)
+	new("Frame", {
+		Size = UDim2.new(1, 0, 0, 8),
+		Position = UDim2.new(0, 0, 1, -8),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+	}, mediaWrapper)
+	local gameImage = new("ImageLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+	}, mediaWrapper)
+
+	local chipRow = new("Frame", { Name = "Chips", Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 8, 0, 8), BackgroundTransparency = 1 }, mediaWrapper)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, chipRow)
+	for i, def in ipairs({
+		{ info.verified == true, "Verified", Color3.fromRGB(90, 210, 130) },
+		{ info.key == true, "Key", Color3.fromRGB(245, 185, 70) },
+		{ info.isPatched == true, "Patched", Color3.fromRGB(240, 95, 95) },
+	}) do
+		if def[1] then
+			local chip = new("TextLabel", {
+				AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.new(0, 0, 1, 0),
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				BackgroundTransparency = 0.35,
+				Text = def[2],
+				TextColor3 = def[3],
+				TextSize = 11,
+				FontFace = sans(),
+				LayoutOrder = i,
+			}, chipRow)
+			corner(chip, 10)
+			padding(chip, 0, 8, 0, 8)
+		end
+	end
+
+	task.spawn(function()
+		if hasFS and getcustomasset and settings.hubThumbs and imgUrl and imgUrl ~= "" then
+			local path = THUMBS_DIR
+			pcall(function()
+				if not isfolder(path) then
+					makefolder(path)
+				end
+			end)
+			local filePath = path .. "/" .. UI.hubInfo.thumbName(imgUrl)
+			pcall(function()
+				if isfile(filePath) then
+					gameImage.Image = getcustomasset(filePath)
+				else
+					local ok, data = pcall(function()
+						return game:HttpGet(imgUrl)
+					end)
+					if ok and type(data) == "string" and #data > 64 then
+						writefile(filePath, data)
+						if gameImage.Parent and isfile(filePath) then
+							gameImage.Image = getcustomasset(filePath)
+						end
+					end
+				end
+			end)
+		end
+	end)
+
+	local header = new("Frame", { Size = UDim2.new(1, 0, 0, 36), Position = UDim2.new(0, 0, 0, 126), BackgroundTransparency = 1 }, tile)
+	padding(header, 0, 12, 0, 12)
+	new("TextLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = titleText,
+		TextColor3 = C.text,
+		TextSize = 16,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, header)
+
+	local descFrame = new("Frame", { Size = UDim2.new(1, 0, 0, 44), Position = UDim2.new(0, 0, 0, 162), BackgroundTransparency = 1 }, tile)
+	padding(descFrame, 0, 12, 0, 12)
+	new("TextLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = (type(info.views) == "number" or type(info.executes) == "number")
+				and (descText .. "\n" .. UI.hubInfo.count(info.views) .. " views  -  " .. UI.hubInfo.count(info.executes) .. " runs")
+			or descText,
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, descFrame)
+
+	local function tileButton(text, icon, pos, size, primary, filled)
+		local b = new("ImageButton", {
+			Size = size,
+			Position = pos,
+			BackgroundTransparency = 0.6,
+			BackgroundColor3 = primary and accent() or C.dim,
+			AutoButtonColor = false,
+		}, tile)
+		corner(b, 8)
+		local holder = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, b)
+		new("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, holder)
+		local ic = newIcon(holder, icon, filled, 18, C.text)
+		ic.LayoutOrder = 1
+		local lbl = new("TextLabel", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = text,
+			TextColor3 = C.text,
+			TextSize = 14,
+			FontFace = sans(),
+			LayoutOrder = 2,
+		}, holder)
+		if primary then
+			accentize(b)
+		end
+		b.MouseEnter:Connect(function()
+			tweenService:Create(b, TweenInfo.new(0.2), { BackgroundColor3 = primary and lighten(accent()) or Color3.fromRGB(45, 45, 45) }):Play()
+		end)
+		b.MouseLeave:Connect(function()
+			tweenService:Create(b, TweenInfo.new(0.2), { BackgroundColor3 = primary and accent() or C.dim }):Play()
+		end)
+		return b, lbl
+	end
+	local execBtn, execLabel = tileButton("Execute", { "play-small" }, UDim2.new(0, 12, 1, -48), UDim2.new(0.5, -18, 0, 36), true, true)
+	local editBtn = tileButton("Edit", { "pencil" }, UDim2.new(0.5, 6, 1, -48), UDim2.new(0.5, -18, 0, 36), false, false)
+	local armed = 0
+	execBtn.MouseButton1Click:Connect(function()
+		armed += 1
+		local mine = armed
+		if settings.confirmHub and execLabel.Text ~= "Confirm?" then
+			execLabel.Text = "Confirm?"
+			task.delay(2.5, function()
+				if armed == mine and execLabel.Parent then
+					execLabel.Text = "Execute"
+				end
+			end)
+			return
+		end
+		execLabel.Text = "Execute"
+		runSource(scriptSource, titleText)
+	end)
+	editBtn.MouseButton1Click:Connect(function()
+		addTab(titleText, scriptSource)
+		if goToPage then
+			goToPage("Executor")
+		end
+	end)
+
+	local open = new("TextButton", {
+		Name = "TileOpen",
+		Size = UDim2.new(1, 0, 1, -56),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 5,
+	}, tile)
+	open.MouseEnter:Connect(function()
+		tweenService:Create(tile, TweenInfo.new(0.15), { BackgroundColor3 = lighten(C.card) }):Play()
+	end)
+	open.MouseLeave:Connect(function()
+		tweenService:Create(tile, TweenInfo.new(0.15), { BackgroundColor3 = C.card }):Play()
+	end)
+	open.MouseButton1Click:Connect(function()
+		local ok, err = pcall(UI.hubDetail, info, gameImage.Image)
+		if not ok then
+			notify("Could not open script details: " .. tostring(err), "error")
+		end
+	end)
+
+	tile.Parent = UI.hubScroll
+end
+
+local hubCategories = {
+	{ name = "All", icon = { "grid" } },
+	{ name = "This Game", icon = { "location-pin" }, thisGame = true },
+	{ name = "Trending", icon = { "flame" }, trending = true },
+	{ name = "Newest", icon = { "clock" }, params = "&sortBy=createdAt&order=desc" },
+	{ name = "Most Viewed", icon = { "eye" }, params = "&sortBy=views&order=desc" },
+	{ name = "Most Liked", icon = { "heart" }, params = "&sortBy=likeCount&order=desc" },
+	{ name = "Universal", icon = { "globe-simplified" }, params = "&universal=1" },
+	{ name = "Verified", icon = { "verified-check" }, params = "&verified=1" },
+	{ name = "Free", icon = { "gift-box" }, params = "&mode=free" },
+	{ name = "No Key", icon = { "key" }, params = "&key=0" },
+	{ name = "Admin", icon = { "crown" }, query = "admin" },
+	{ name = "ESP", icon = { "binoculars" }, query = "esp" },
+	{ name = "Aimbot", icon = { "crosshairs" }, query = "aimbot" },
+	{ name = "Fly", icon = { "paper-airplane" }, query = "fly" },
+	{ name = "Auto Farm", icon = { "gear" }, query = "auto farm" },
+	{ name = "Hubs", icon = { "squares-grid-plus" }, query = "hub" },
+	{ name = "Teleport", icon = { "person-teleport" }, query = "teleport" },
+}
+
+local function hubUrl(query, cat, page)
+	page = page or 1
+	local max = "&max=" .. settings.hubMax
+	local params = cat.params or ""
+	local sort = UI.hub.sort()
+	if sort.params ~= "" then
+		params = params:gsub("&sortBy=[^&]*", ""):gsub("&order=[^&]*", "") .. sort.params
+	end
+	local catQuery = cat.query
+	if cat.thisGame then
+		catQuery = UI.hub.searchName()
+	end
+	local pageParam = page > 1 and ("&page=" .. page) or ""
+	if query ~= "" then
+		return "https://scriptblox.com/api/script/search?q=" .. httpService:UrlEncode(query) .. max .. params .. pageParam
+	end
+	if cat.trending then
+		return "https://scriptblox.com/api/script/trending?max=" .. settings.hubMax
+	end
+	if catQuery then
+		return "https://scriptblox.com/api/script/search?q=" .. httpService:UrlEncode(catQuery) .. max .. params .. pageParam
+	end
+	return "https://scriptblox.com/api/script/fetch?page=" .. page .. max .. params
+end
+
+function fetchScripts(query, page)
+	page = page or 1
+	local append = page > 1
+	query = query or ""
+	local M = UI.hubMore
+	if append then
+		M.show("loading")
+	else
+		lastQuery = query
+		hubLoaded = true
+		M.seen, M.loaded, M.page = {}, 0, 1
+	end
+	hubRequest += 1
+	local myId = hubRequest
+	local cat = hubCategories[settings.hubCategory] or hubCategories[1]
+	if not append then
+		clearHub()
+		UI.hubStatus.Text = "Loading..."
+		if cat.thisGame and game.PlaceId == 0 then
+			UI.hubStatus.Text = "Join a game first"
+			return
+		end
+	end
+	task.spawn(function()
+		local ok, response = pcall(function()
+			return game:HttpGet(hubUrl(query, cat, page))
+		end)
+		if myId ~= hubRequest or not running then
+			return
+		end
+		if not ok or not response then
+			if append then
+				M.show("retry")
+			else
+				UI.hubStatus.Text = "Request failed"
+			end
+			notify("Script Hub request failed", "error")
+			return
+		end
+		local okDecode, decoded = pcall(function()
+			return httpService:JSONDecode(response)
+		end)
+		local result = okDecode and type(decoded) == "table" and decoded.result
+		local list = type(result) == "table" and (result.scripts or (result[1] and result))
+		if not list then
+			if append then
+				M.remove()
+			else
+				UI.hubStatus.Text = "No results"
+			end
+			return
+		end
+		if append then
+			M.remove()
+		end
+		local shown = 0
+		for _, s in ipairs(list) do
+			if myId ~= hubRequest or not running then
+				return
+			end
+			local id = s._id or s.slug
+			local skip = (settings.hideKey and s.key == true) or (settings.hidePatched and s.isPatched == true) or (settings.verifiedOnly and s.verified == false)
+			if cat.thisGame and not UI.hub.matches(s) then
+				skip = true
+			end
+			if id then
+				if M.seen[id] then
+					skip = true
+				end
+				M.seen[id] = true
+			end
+			if not skip then
+				local gameName, gameId = "Universal", ""
+				if type(s.game) == "table" then
+					gameName = s.game.name or gameName
+					gameId = s.game.gameId or ""
+				end
+				local imgUrl = UI.hubInfo.imageUrl(s)
+				createScriptTile(s.title or "Unknown Script", gameName, gameId, imgUrl, s.script or "", s)
+				shown += 1
+				if shown % 10 == 0 then
+					task.wait()
+				end
+			end
+		end
+		M.loaded += shown
+		M.page = page
+		UI.hubStatus.Text = M.loaded == 0 and (cat.thisGame and ("No scripts found for " .. UI.hub.gameName()) or "No results") or ""
+		local pageable = not (cat.trending and query == "")
+		local more = false
+		if pageable then
+			if type(result.nextPage) == "number" then
+				more = true
+			elseif type(result.totalPages) == "number" then
+				more = page < result.totalPages
+			else
+				more = #list >= settings.hubMax
+			end
+		end
+		if cat.thisGame and more and M.loaded < 8 and page < 8 then
+			UI.hubStatus.Text = M.loaded == 0 and "Searching more pages..." or ""
+			fetchScripts(query, page + 1)
+			return
+		end
+		if more then
+			M.show("ready")
+		else
+			M.remove()
+		end
+	end)
+end
+
+function UI.hubMore.load()
+	local M = UI.hubMore
+	if M.state == "loading" then
+		return
+	end
+	fetchScripts(lastQuery, M.page + 1)
+end
+
+local hubChips = {}
+local function refreshChips()
+	for i, chip in ipairs(hubChips) do
+		local sel = i == settings.hubCategory
+		chip.btn.BackgroundColor3 = sel and accent() or C.card
+		chip.btn.BackgroundTransparency = sel and 0.2 or 0.4
+		chip.icon.FontFace = iconFont(sel)
+	end
+end
+for i, cat in ipairs(hubCategories) do
+	local btn = new("TextButton", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 0, 34),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.4,
+		AutoButtonColor = false,
+		Text = "",
+		LayoutOrder = i,
+	}, UI.hubCats)
+	corner(btn, 17)
+	local holder = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), BackgroundTransparency = 1 }, btn)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, holder)
+	padding(holder, 0, 14, 0, 14)
+	local ic = newIcon(holder, cat.icon, false, 16, C.text)
+	ic.LayoutOrder = 1
+	new("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = cat.name,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		LayoutOrder = 2,
+	}, holder)
+	btn.MouseButton1Click:Connect(function()
+		setSetting("hubCategory", i)
+		fetchScripts(UI.searchBox.Text)
+	end)
+	hubChips[i] = { btn = btn, icon = ic }
+end
+bind("hubCategory", refreshChips)
+bind("accent", refreshChips, true)
+
+bind("hubSort", UI.hub.refreshSort)
+bind("accent", UI.hub.refreshSort, true)
+
+UI.hub.sortBtn.MouseButton1Click:Connect(function()
+	local options = {}
+	for i, s in ipairs(UI.hub.sorts) do
+		options[i] = { label = s.name, value = i }
+	end
+	ov.dropdown(UI.hub.sortBtn, options, settings.hubSort, function(value)
+		setSetting("hubSort", value)
+		fetchScripts(UI.searchBox.Text)
+	end, { minWidth = 220 })
+end)
+
+UI.hub.refreshBtn.MouseButton1Click:Connect(function()
+	UI.hub.game.name = nil
+	UI.hub.refreshIcon.Rotation = 0
+	tweenService:Create(UI.hub.refreshIcon, TweenInfo.new(0.6, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Rotation = 360 }):Play()
+	fetchScripts(UI.searchBox.Text)
+end)
+
+UI.searchBox.FocusLost:Connect(function()
+	if UI.searchBox.Text ~= lastQuery then
+		fetchScripts(UI.searchBox.Text)
+	end
+end)
+
+UI.hubInfo = {}
+
+function UI.hubInfo.count(n)
+	if type(n) ~= "number" then
+		return "-"
+	end
+	if n >= 1000000 then
+		return string.format("%.1fM", n / 1000000)
+	elseif n >= 10000 then
+		return string.format("%.1fK", n / 1000)
+	end
+	local s = tostring(math.floor(n))
+	while true do
+		local r, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+		s = r
+		if k == 0 then
+			break
+		end
+	end
+	return s
+end
+
+function UI.hubInfo.stamp(iso)
+	if type(iso) ~= "string" or iso == "" then
+		return nil
+	end
+	local ok, text = pcall(function()
+		local dt = DateTime.fromIsoDate(iso)
+		if not dt then
+			error("bad date")
+		end
+		local day = dt:FormatUniversalTime("D MMM YYYY", "en-us")
+		local diff = os.time() - dt.UnixTimestamp
+		local ago
+		if diff < 90 then
+			ago = "just now"
+		elseif diff < 5400 then
+			ago = math.floor(diff / 60 + 0.5) .. "m ago"
+		elseif diff < 129600 then
+			ago = math.floor(diff / 3600 + 0.5) .. "h ago"
+		elseif diff < 86400 * 60 then
+			ago = math.floor(diff / 86400 + 0.5) .. "d ago"
+		elseif diff < 86400 * 730 then
+			ago = math.floor(diff / 86400 / 30 + 0.5) .. "mo ago"
+		else
+			ago = math.floor(diff / 86400 / 365 + 0.5) .. "y ago"
+		end
+		return day .. "  (" .. ago .. ")"
+	end)
+	if ok and type(text) == "string" then
+		return text
+	end
+	return iso:sub(1, 10)
+end
+
+function UI.hubInfo.name(v)
+	if type(v) == "string" and v ~= "" then
+		return v
+	end
+	if type(v) == "table" then
+		local n = v.username or v.name or v.displayName
+		if type(n) == "string" and n ~= "" then
+			return n
+		end
+	end
+	return nil
+end
+
+function UI.hubInfo.tags(v)
+	if type(v) ~= "table" then
+		return nil
+	end
+	local out = {}
+	for _, t in ipairs(v) do
+		local n = UI.hubInfo.name(t)
+		if n then
+			out[#out + 1] = n
+		end
+	end
+	if #out == 0 then
+		return nil
+	end
+	return table.concat(out, ", ")
+end
+
+function UI.hubInfo.imageUrl(s)
+	local pick
+	if type(s) == "table" then
+		local own = s.image
+		local fromGame = type(s.game) == "table" and s.game.imageUrl or nil
+		if type(own) == "string" and own ~= "" then
+			pick = own
+		elseif type(fromGame) == "string" and fromGame ~= "" then
+			pick = fromGame
+		end
+	end
+	if not pick then
+		return ""
+	end
+	if pick:sub(1, 4) == "http" then
+		return pick
+	end
+	return "https://scriptblox.com" .. (pick:sub(1, 1) == "/" and "" or "/") .. pick
+end
+
+function UI.hubInfo.thumbName(url)
+	local hash = 5381
+	for i = 1, #url do
+		hash = (hash * 33 + string.byte(url, i)) % 4294967296
+	end
+	local readable = string.sub((string.gsub(string.gsub(url, "^https?://[^/]+", ""), "[^%w]", "_")), -48)
+	return readable .. "_" .. string.format("%08x", hash) .. ".png"
+end
+
+function UI.hubDetail(info, thumb)
+	info = type(info) == "table" and info or {}
+	local I = UI.hubInfo
+	local title = tostring(info.title or "Unknown Script")
+	local source = type(info.script) == "string" and info.script or ""
+	local gameInfo = type(info.game) == "table" and info.game or {}
+	local universal = info.isUniversal == true or (info.game == nil)
+	local gameName = universal and "Universal" or tostring(gameInfo.name or "Unknown game")
+	local gameId = gameInfo.gameId ~= nil and tostring(gameInfo.gameId) or nil
+	local slug = type(info.slug) == "string" and info.slug or nil
+	local keyLink = type(info.keyLink) == "string" and info.keyLink ~= "" and info.keyLink or nil
+	local forThisGame = false
+	if gameId and not universal then
+		forThisGame = gameId == tostring(game.GameId) or gameId == tostring(game.PlaceId)
+	end
+
+	local panel = ov.panel(620, 560)
+	local box = panel.box
+	local ACTION_H = 100
+
+	local body = new("ScrollingFrame", {
+		Name = "DetailBody",
+		Size = UDim2.new(1, 0, 1, -ACTION_H),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+		ScrollBarImageTransparency = 0.45,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, box)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 14) }, body)
+	padding(body, 0, 20, 16, 20)
+	local order = 0
+	local function nextOrder()
+		order += 1
+		return order
+	end
+
+	local banner = new("Frame", {
+		Name = "Banner",
+		Size = UDim2.new(1, 0, 0, 140),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		LayoutOrder = nextOrder(),
+	}, body)
+	corner(banner, 10)
+	local art = new("ImageLabel", {
+		Name = "Art",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		ScaleType = Enum.ScaleType.Crop,
+		Image = type(thumb) == "string" and thumb or "",
+	}, banner)
+	new("Frame", {
+		Name = "Fade",
+		Size = UDim2.new(1, 0, 0, 44),
+		Position = UDim2.new(0, 0, 1, -44),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		BorderSizePixel = 0,
+	}, banner)
+	new("TextLabel", {
+		Name = "GameLabel",
+		Size = UDim2.new(1, -24, 0, 24),
+		Position = UDim2.new(0, 12, 1, -32),
+		BackgroundTransparency = 1,
+		Text = gameName,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextSize = 15,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, banner)
+
+	new("TextLabel", {
+		Name = "Title",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Text = title,
+		TextColor3 = C.text,
+		TextSize = 22,
+		FontFace = sans(),
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		LayoutOrder = nextOrder(),
+	}, body)
+
+	local badges = new("Frame", {
+		Name = "Badges",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		LayoutOrder = nextOrder(),
+	}, body)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Wraps = true,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 6),
+	}, badges)
+	local badgeCount = 0
+	local function pill(text, color)
+		badgeCount += 1
+		local p = new("Frame", {
+			Name = "Badge",
+			AutomaticSize = Enum.AutomaticSize.XY,
+			Size = UDim2.new(0, 0, 0, 24),
+			BackgroundColor3 = color,
+			BackgroundTransparency = 0.78,
+			BorderSizePixel = 0,
+			LayoutOrder = badgeCount,
+		}, badges)
+		corner(p, 12)
+		padding(p, 0, 10, 0, 10)
+		new("TextLabel", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = text,
+			TextColor3 = color,
+			TextSize = 12,
+			FontFace = sans(),
+		}, p)
+	end
+	local GREEN, AMBER, RED, BLUE, GREY = Color3.fromRGB(90, 210, 130), Color3.fromRGB(245, 185, 70), Color3.fromRGB(240, 95, 95), Color3.fromRGB(110, 170, 255), Color3.fromRGB(175, 178, 190)
+	pill(info.verified == true and "Verified" or "Unverified", info.verified == true and GREEN or GREY)
+	pill(info.key == true and "Key required" or "No key", info.key == true and AMBER or GREEN)
+	pill(tostring(info.scriptType) == "paid" and "Paid" or "Free", tostring(info.scriptType) == "paid" and AMBER or GREEN)
+	pill(universal and "Universal" or "Game specific", BLUE)
+	if forThisGame then
+		pill("Made for this game", GREEN)
+	end
+	if info.isHub == true then
+		pill("Hub", BLUE)
+	end
+	if info.isPatched == true then
+		pill("Patched", RED)
+	end
+
+	local stats = new("Frame", { Name = "Stats", Size = UDim2.new(1, 0, 0, 62), BackgroundTransparency = 1, LayoutOrder = nextOrder() }, body)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, stats)
+	local statLabels = {}
+	local lineCount = 1
+	for _ in source:gmatch("\n") do
+		lineCount += 1
+	end
+	for i, def in ipairs({
+		{ "views", "Views", I.count(info.views) },
+		{ "executes", "Executes", I.count(info.executes) },
+		{ "likes", "Likes", "..." },
+		{ "dislikes", "Dislikes", "..." },
+		{ "lines", "Lines", source == "" and "-" or I.count(lineCount) },
+	}) do
+		local cell = new("Frame", {
+			Name = "Stat_" .. def[1],
+			Size = UDim2.new(0.2, -7, 1, 0),
+			BackgroundColor3 = C.card,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			LayoutOrder = i,
+		}, stats)
+		corner(cell, 8)
+		statLabels[def[1]] = new("TextLabel", {
+			Name = "Value",
+			Size = UDim2.new(1, 0, 0, 30),
+			Position = UDim2.new(0, 0, 0, 8),
+			BackgroundTransparency = 1,
+			Text = def[3],
+			TextColor3 = C.text,
+			TextSize = 20,
+			FontFace = sans(),
+		}, cell)
+		new("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 16),
+			Position = UDim2.new(0, 0, 0, 38),
+			BackgroundTransparency = 1,
+			Text = def[2],
+			TextColor3 = C.sub,
+			TextSize = 12,
+			FontFace = sans(Enum.FontWeight.Regular),
+		}, cell)
+	end
+
+	local facts = new("Frame", {
+		Name = "Facts",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		LayoutOrder = nextOrder(),
+	}, body)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, facts)
+	local factRows = {}
+	local function setFact(key, value)
+		local row = factRows[key]
+		if not row then
+			return
+		end
+		row.frame.Visible = value ~= nil
+		if value ~= nil then
+			row.value.Text = tostring(value)
+		end
+	end
+	for i, def in ipairs({
+		{ "author", "Author" },
+		{ "published", "Published" },
+		{ "updated", "Updated" },
+		{ "bumped", "Last bumped" },
+		{ "reviewed", "Reviewed" },
+		{ "game", "Game" },
+		{ "gameId", "Game ID" },
+		{ "scriptId", "Script ID" },
+		{ "tags", "Tags" },
+		{ "keyLink", "Key link" },
+	}) do
+		local frame = new("Frame", {
+			Name = "Fact_" .. def[1],
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, 0, 0, 20),
+			BackgroundTransparency = 1,
+			Visible = false,
+			LayoutOrder = i,
+		}, facts)
+		new("TextLabel", {
+			Size = UDim2.new(0, 110, 0, 20),
+			BackgroundTransparency = 1,
+			Text = def[2],
+			TextColor3 = C.sub,
+			TextSize = 13,
+			FontFace = sans(Enum.FontWeight.Regular),
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, frame)
+		local value = new("TextLabel", {
+			Name = "Value",
+			AutomaticSize = Enum.AutomaticSize.Y,
+			Size = UDim2.new(1, -118, 0, 20),
+			Position = UDim2.new(0, 118, 0, 0),
+			BackgroundTransparency = 1,
+			Text = "",
+			TextColor3 = C.text,
+			TextSize = 13,
+			FontFace = sans(),
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+		}, frame)
+		factRows[def[1]] = { frame = frame, value = value }
+	end
+	setFact("author", I.name(info.owner))
+	setFact("published", I.stamp(info.createdAt))
+	setFact("updated", I.stamp(info.updatedAt))
+	setFact("bumped", I.stamp(info.lastBump))
+	setFact("reviewed", I.stamp(info.reviewedAt))
+	setFact("game", gameName)
+	setFact("gameId", (gameId and not universal) and gameId or nil)
+	setFact("scriptId", info._id)
+	setFact("keyLink", keyLink)
+
+	local aboutHead = new("TextLabel", {
+		Name = "AboutHead",
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		Text = "About",
+		TextColor3 = C.text,
+		TextSize = 15,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Visible = false,
+		LayoutOrder = nextOrder(),
+	}, body)
+	local about = new("TextLabel", {
+		Name = "About",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Visible = false,
+		LayoutOrder = nextOrder(),
+	}, body)
+	local function setAbout(text)
+		if type(text) == "string" and text:match("%S") then
+			aboutHead.Visible = true
+			about.Visible = true
+			about.Text = text
+		end
+	end
+	setAbout(info.features)
+
+	new("TextLabel", {
+		Name = "CodeHead",
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		Text = "Code preview",
+		TextColor3 = C.text,
+		TextSize = 15,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = nextOrder(),
+	}, body)
+	local codeBox = new("Frame", {
+		Name = "Code",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 40),
+		BackgroundColor3 = C.dark,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		LayoutOrder = nextOrder(),
+	}, body)
+	corner(codeBox, 8)
+	padding(codeBox, 10, 12, 10, 12)
+	local previewLabel = new("TextLabel", {
+		Name = "Preview",
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.text,
+		TextSize = 12,
+		FontFace = MONO,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, codeBox)
+	local function applySource()
+		local preview = source:sub(1, 2400)
+		if #source > 2400 then
+			preview = preview .. "\n... (" .. I.count(#source - 2400) .. " more characters)"
+		end
+		if source == "" then
+			preview = "-- no source returned by ScriptBlox"
+		end
+		previewLabel.Text = preview
+		local total = 1
+		for _ in source:gmatch("\n") do
+			total += 1
+		end
+		statLabels.lines.Text = source == "" and "-" or I.count(total)
+	end
+	applySource()
+
+	local bar = new("Frame", {
+		Name = "Actions",
+		Size = UDim2.new(1, 0, 0, ACTION_H),
+		Position = UDim2.new(0, 0, 1, -ACTION_H),
+		BackgroundColor3 = Color3.new(0.085, 0.085, 0.105),
+		BorderSizePixel = 0,
+	}, box)
+	padding(bar, 12, 20, 12, 20)
+	new("UIGridLayout", {
+		CellSize = UDim2.new(0.25, -6, 0, 34),
+		CellPadding = UDim2.new(0, 8, 0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, bar)
+	local actionOrder = 0
+	local function action(text, icon, primary, onClick)
+		actionOrder += 1
+		local b, _, lbl = iconBtn(text, icon, 120, bar, 34, primary)
+		b.Name = "Action_" .. text:gsub("%s", "")
+		b.LayoutOrder = actionOrder
+		if primary then
+			accentize(b)
+			b.BackgroundTransparency = 0.1
+		end
+		b.MouseButton1Click:Connect(function()
+			onClick(b, lbl)
+		end)
+		return b, lbl
+	end
+	local function armedAction(text, icon, primary, confirmText, needsConfirm, onClick)
+		local armed = 0
+		return action(text, icon, primary, function(_, lbl)
+			armed += 1
+			local mine = armed
+			if needsConfirm() and lbl and lbl.Text ~= confirmText then
+				lbl.Text = confirmText
+				task.delay(2.5, function()
+					if armed == mine and lbl.Parent then
+						lbl.Text = text
+					end
+				end)
+				return
+			end
+			if lbl then
+				lbl.Text = text
+			end
+			onClick()
+		end)
+	end
+	local function copy(value, what)
+		if setclipboard and value and value ~= "" then
+			pcall(setclipboard, tostring(value))
+			notify(what .. " copied", "success")
+		elseif value and value ~= "" then
+			notify("setclipboard is not supported by your executor", "warn")
+		else
+			notify("Nothing to copy", "warn")
+		end
+	end
+
+	armedAction("Execute", { "play-small" }, true, "Confirm?", function()
+		return settings.confirmHub == true
+	end, function()
+		if source == "" then
+			notify("This script has no source to run", "warn")
+			return
+		end
+		runSource(source, title)
+	end)
+	action("Edit", { "pencil" }, false, function()
+		panel.close()
+		addTab(title, source)
+		if goToPage then
+			goToPage("Executor")
+		end
+	end)
+	action("Copy Script", { "stacked-squares-plus", "clipboard-pencil" }, false, function()
+		copy(source, "Script")
+	end)
+	action("Pin Quick", { "pin" }, false, function()
+		if source == "" then
+			notify("This script has no source to pin", "warn")
+			return
+		end
+		local list = settings.pinned
+		for _, p in ipairs(list) do
+			if type(p) == "table" and p.name == title and p.source == source then
+				notify("'" .. title .. "' is already pinned", "info")
+				return
+			end
+		end
+		table.insert(list, { name = title, source = source })
+		setSetting("pinned", list)
+		rebuildQuick()
+		notify("Pinned '" .. title .. "' to Quick Scripts", "success")
+	end)
+	if slug then
+		action("Copy Link", { "chain-link" }, false, function()
+			copy("https://scriptblox.com/script/" .. slug, "Link")
+		end)
+	end
+	local keyBtn
+	if info.key == true or keyLink then
+		keyBtn = action("Key Link", { "key" }, false, function()
+			copy(keyLink, "Key link")
+		end)
+	end
+	local placeNumber = gameId and tonumber(gameId)
+	if placeNumber and not universal and not forThisGame then
+		armedAction("Join Game", { "person-teleport" }, false, "Confirm?", function()
+			return true
+		end, function()
+			local ok, err = pcall(function()
+				game:GetService("TeleportService"):Teleport(placeNumber)
+			end)
+			if ok then
+				notify("Teleporting to " .. gameName .. "...", "info")
+			else
+				notify("Teleport failed: " .. tostring(err), "error")
+			end
+		end)
+	end
+	action("Close", { "x" }, false, panel.close)
+
+	local closeX = new("TextButton", {
+		Name = "CloseX",
+		Size = UDim2.fromOffset(30, 30),
+		Position = UDim2.new(1, -42, 0, 10),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		AutoButtonColor = false,
+		Text = "",
+	}, box)
+	corner(closeX, 15)
+	local xi = newIcon(closeX, { "x" }, false, 16, Color3.new(1, 1, 1))
+	xi.AnchorPoint = Vector2.new(0.5, 0.5)
+	xi.Position = UDim2.new(0.5, 0, 0.5, 0)
+	closeX.MouseButton1Click:Connect(panel.close)
+
+	panel.show()
+
+	if slug then
+		task.spawn(function()
+			local ok, response = pcall(function()
+				return game:HttpGet("https://scriptblox.com/api/script/" .. slug)
+			end)
+			if not panel.isOpen() then
+				return
+			end
+			local decoded = ok and select(2, pcall(function()
+				return httpService:JSONDecode(response)
+			end))
+			local d = type(decoded) == "table" and (decoded.script or (type(decoded.result) == "table" and decoded.result.script))
+			if type(d) ~= "table" then
+				statLabels.likes.Text = "-"
+				statLabels.dislikes.Text = "-"
+				return
+			end
+			statLabels.likes.Text = I.count(d.likeCount)
+			statLabels.dislikes.Text = I.count(d.dislikeCount)
+			if source == "" and type(d.script) == "string" and d.script ~= "" then
+				source = d.script
+				applySource()
+			end
+			setFact("author", I.name(d.owner) or I.name(info.owner))
+			setFact("updated", I.stamp(d.updatedAt))
+			setFact("tags", I.tags(d.tags))
+			if type(d.reviewed) == "table" then
+				local who = I.name(d.reviewed.by) or I.name(d.reviewed.user) or I.name(d.reviewed)
+				local when = I.stamp(d.reviewed.at or d.reviewed.date or d.reviewed.reviewedAt)
+				setFact("reviewed", who and (when and (who .. "  -  " .. when) or who) or when)
+			end
+			if type(d.keyLink) == "string" and d.keyLink ~= "" then
+				keyLink = d.keyLink
+				setFact("keyLink", keyLink)
+			end
+			setAbout(d.features)
+		end)
+	end
+	return panel
+end
+
+UI.playersPage = new("Frame", { Name = "PlayersPage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+
+local localPlayer = players.LocalPlayer
+local plRows, plSelected = {}, nil
+plSpectating, plFollowing, plFollowToken, plAllHighlight = nil, nil, 0, false
+local plHighlights, plHlConns = {}, {}
+local plActionButtons = {}
+local hlFolder = new("Folder", { Name = "BasesHighlights" }, coreGui)
+
+hlColorOptions = {
+	{ label = "Accent", value = 1 },
+	{ label = "Red", value = 2, color = Color3.fromRGB(235, 64, 82) },
+	{ label = "Green", value = 3, color = Color3.fromRGB(46, 204, 113) },
+	{ label = "Blue", value = 4, color = Color3.fromRGB(70, 130, 255) },
+	{ label = "Yellow", value = 5, color = Color3.fromRGB(255, 200, 40) },
+	{ label = "White", value = 6, color = Color3.fromRGB(255, 255, 255) },
+}
+function hlColor()
+	local o = hlColorOptions[settings.hlColor]
+	return (o and o.color) or accent()
+end
+
+local function charOf(p)
+	return p and p.Character
+end
+local function rootOf(p)
+	local c = charOf(p)
+	return c and (c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso"))
+end
+local function humOf(p)
+	local c = charOf(p)
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function distanceTo(p)
+	local a, b = rootOf(localPlayer), rootOf(p)
+	if a and b then
+		return (a.Position - b.Position).Magnitude
+	end
+	return nil
+end
+function copyText(s, what)
+	if setclipboard then
+		pcall(setclipboard, tostring(s))
+		notify("Copied " .. what, "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end
+local function needOther(p)
+	if p == localPlayer then
+		notify("That's you", "warn")
+		return false
+	end
+	return true
+end
+
+local plSearchFrame = new("Frame", {
+	Position = UDim2.new(0, 24, 0, 16),
+	Size = UDim2.new(0, 208, 0, 40),
+	BackgroundColor3 = C.card,
+}, UI.playersPage)
+corner(plSearchFrame, 8)
+local plSearchIcon = newIcon(plSearchFrame, { "magnifying-glass" }, false, 18, C.sub)
+plSearchIcon.Position = UDim2.new(0, 10, 0.5, -11)
+UI.plSearch = new("TextBox", {
+	Position = UDim2.new(0, 38, 0, 0),
+	Size = UDim2.new(1, -46, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	PlaceholderText = "Search players...",
+	PlaceholderColor3 = C.sub,
+	TextColor3 = C.text,
+	TextSize = 15,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+}, plSearchFrame)
+
+plRefreshBtn = iconBtn("", { "arrow-rotate-right" }, 40, UI.playersPage, 40, false)
+plRefreshBtn.Position = UDim2.new(0, 240, 0, 16)
+plEspBtn, plEspIcon = iconBtn("", { "eye" }, 40, UI.playersPage, 40, false)
+plEspBtn.Position = UDim2.new(0, 288, 0, 16)
+
+UI.plList = new("ScrollingFrame", {
+	Position = UDim2.new(0, 24, 0, 64),
+	Size = UDim2.new(0, 304, 1, -88),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.playersPage)
+corner(UI.plList, 8)
+padding(UI.plList, 6, 6, 6, 6)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, UI.plList)
+
+UI.plPanel = new("Frame", {
+	Position = UDim2.new(0, 344, 0, 16),
+	Size = UDim2.new(1, -368, 1, -40),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+}, UI.playersPage)
+corner(UI.plPanel, 8)
+UI.plEmpty = new("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "Select a player from the list",
+	TextColor3 = C.sub,
+	TextSize = 16,
+	FontFace = sans(),
+}, UI.plPanel)
+UI.plContent = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.plPanel)
+UI.plAvatar = new("ImageLabel", {
+	Position = UDim2.new(0, 16, 0, 16),
+	Size = UDim2.fromOffset(96, 96),
+	BackgroundColor3 = C.dark,
+	BorderSizePixel = 0,
+}, UI.plContent)
+corner(UI.plAvatar, 12)
+local function plLabel(y, size, color, weight)
+	return new("TextLabel", {
+		Position = UDim2.new(0, 128, 0, y),
+		Size = UDim2.new(1, -144, 0, size + 6),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = color,
+		TextSize = size,
+		FontFace = sans(weight),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, UI.plContent)
+end
+UI.plName = plLabel(16, 22, C.text, Enum.FontWeight.Bold)
+UI.plUser = plLabel(46, 14, C.sub, Enum.FontWeight.Medium)
+UI.plId = plLabel(68, 14, C.sub, Enum.FontWeight.Medium)
+UI.plAge = plLabel(90, 14, C.sub, Enum.FontWeight.Medium)
+
+local plInfo = {}
+local function infoCell(col, row, title)
+	local x = 16 + col * 152
+	local y = 124 + row * 36
+	new("TextLabel", {
+		Position = UDim2.new(0, x, 0, y),
+		Size = UDim2.new(0, 148, 0, 14),
+		BackgroundTransparency = 1,
+		Text = title,
+		TextColor3 = C.sub,
+		TextSize = 11,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, UI.plContent)
+	return new("TextLabel", {
+		Position = UDim2.new(0, x, 0, y + 14),
+		Size = UDim2.new(0, 148, 0, 18),
+		BackgroundTransparency = 1,
+		Text = "-",
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, UI.plContent)
+end
+plInfo.team = infoCell(0, 0, "TEAM")
+plInfo.health = infoCell(1, 0, "HEALTH")
+plInfo.distance = infoCell(2, 0, "DISTANCE")
+plInfo.tool = infoCell(0, 1, "EQUIPPED")
+plInfo.speed = infoCell(1, 1, "WALK SPEED")
+plInfo.status = infoCell(2, 1, "STATUS")
+
+UI.plActions = new("ScrollingFrame", {
+	Position = UDim2.new(0, 16, 0, 204),
+	Size = UDim2.new(1, -32, 1, -216),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.plContent)
+new("UIGridLayout", {
+	CellSize = UDim2.fromOffset(142, 38),
+	CellPadding = UDim2.fromOffset(8, 8),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, UI.plActions)
+
+function setHighlight(p, on)
+	local existing = plHighlights[p]
+	if on then
+		if existing then
+			return
+		end
+		local h = new("Highlight", {
+			FillColor = hlColor(),
+			FillTransparency = settings.hlFill,
+			OutlineColor = Color3.new(1, 1, 1),
+			DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+			Adornee = p.Character,
+		}, hlFolder)
+		plHighlights[p] = h
+		plHlConns[p] = p.CharacterAdded:Connect(function(c)
+			if plHighlights[p] then
+				plHighlights[p].Adornee = c
+			end
+		end)
+	elseif existing then
+		existing:Destroy()
+		plHighlights[p] = nil
+		if plHlConns[p] then
+			plHlConns[p]:Disconnect()
+			plHlConns[p] = nil
+		end
+	end
+end
+local function refreshHighlightStyle()
+	for _, h in pairs(plHighlights) do
+		h.FillColor = hlColor()
+		h.FillTransparency = settings.hlFill
+	end
+end
+bind("hlColor", refreshHighlightStyle, true)
+bind("hlFill", refreshHighlightStyle, true)
+
+function stopSpectate()
+	plSpectating = nil
+	local cam = workspace.CurrentCamera
+	local h = humOf(localPlayer)
+	if cam and h then
+		cam.CameraSubject = h
+	end
+end
+local function startSpectate(p)
+	local h = humOf(p)
+	if not h then
+		notify(p.DisplayName .. " has no character right now", "warn")
+		return
+	end
+	plSpectating = p
+	workspace.CurrentCamera.CameraSubject = h
+end
+track(runService.Heartbeat:Connect(function()
+	if plSpectating then
+		local h = humOf(plSpectating)
+		local cam = workspace.CurrentCamera
+		if h and cam and cam.CameraSubject ~= h then
+			cam.CameraSubject = h
+		end
+	end
+end))
+
+function stopFollow()
+	plFollowToken += 1
+	plFollowing = nil
+end
+local function startFollow(p)
+	plFollowToken += 1
+	local mine = plFollowToken
+	plFollowing = p
+	task.spawn(function()
+		while running and plFollowing == p and plFollowToken == mine do
+			local me, them, hum = rootOf(localPlayer), rootOf(p), humOf(localPlayer)
+			if me and them and hum then
+				if (me.Position - them.Position).Magnitude > settings.followDistance then
+					hum:MoveTo(them.Position)
+				end
+			end
+			task.wait(0.15)
+		end
+	end)
+end
+
+function setAllHighlights(on)
+	plAllHighlight = on
+	for _, p in ipairs(players:GetPlayers()) do
+		if p ~= localPlayer then
+			setHighlight(p, on)
+		end
+	end
+	plEspIcon.FontFace = iconFont(on)
+	plEspBtn.BackgroundColor3 = on and accent() or C.card
+end
+
+onCleanup(function()
+	stopFollow()
+	stopSpectate()
+	for _, c in pairs(plHlConns) do
+		c:Disconnect()
+	end
+	hlFolder:Destroy()
+end)
+
+function updateActionStates()
+	for _, a in ipairs(plActionButtons) do
+		if a.active then
+			local on = plSelected ~= nil and a.active(plSelected)
+			a.btn.BackgroundColor3 = on and accent() or C.card
+			a.btn.BackgroundTransparency = on and 0.35 or 0.3
+			a.icon.FontFace = iconFont(on)
+		end
+	end
+end
+
+local function updatePanel()
+	local p = plSelected
+	if not p then
+		return
+	end
+	local hum = humOf(p)
+	local d = distanceTo(p)
+	UI.plName.Text = p.DisplayName
+	UI.plUser.Text = "@" .. p.Name
+	UI.plId.Text = "User ID: " .. p.UserId
+	UI.plAge.Text = "Account age: " .. p.AccountAge .. " days"
+	plInfo.team.Text = p.Team and p.Team.Name or "None"
+	plInfo.health.Text = hum and (math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth)) or "N/A"
+	plInfo.distance.Text = d and (math.floor(d) .. " studs") or "N/A"
+	local tool = p.Character and p.Character:FindFirstChildOfClass("Tool")
+	plInfo.tool.Text = tool and tool.Name or "None"
+	plInfo.speed.Text = hum and tostring(math.floor(hum.WalkSpeed)) or "N/A"
+	plInfo.status.Text = (hum and hum.Health > 0) and "Alive" or "No character"
+end
+
+function styleRows()
+	for p, r in pairs(plRows) do
+		local sel = p == plSelected
+		r.row.BackgroundColor3 = sel and accent() or C.dim
+		r.row.BackgroundTransparency = sel and 0.45 or 0.4
+	end
+end
+
+local function selectPlayer(p)
+	plSelected = p
+	UI.plEmpty.Visible = p == nil
+	UI.plContent.Visible = p ~= nil
+	if p then
+		UI.plAvatar.Image = string.format("rbxthumb://type=AvatarBust&id=%d&w=150&h=150", p.UserId)
+		updatePanel()
+	end
+	updateActionStates()
+	styleRows()
+end
+
+local function addAction(label, icon, fn, active)
+	local b, ic = iconBtn(label, icon, 142, UI.plActions, 38, false, 13)
+	b.LayoutOrder = #plActionButtons + 1
+	local entry = { btn = b, icon = ic, active = active }
+	table.insert(plActionButtons, entry)
+	b.MouseButton1Click:Connect(function()
+		if plSelected then
+			fn(plSelected)
+			updatePanel()
+			updateActionStates()
+		end
+	end)
+end
+
+addAction("Teleport", { "person-teleport" }, function(p)
+	if not needOther(p) then
+		return
+	end
+	local me, them = rootOf(localPlayer), rootOf(p)
+	if not me or not them then
+		notify("One of you has no character", "warn")
+		return
+	end
+	me.CFrame = them.CFrame * CFrame.new(0, 0, settings.tpOffset)
+end)
+addAction("Spectate", { "video-camera" }, function(p)
+	if not needOther(p) then
+		return
+	end
+	if plSpectating == p then
+		stopSpectate()
+	else
+		startSpectate(p)
+	end
+end, function(p)
+	return plSpectating == p
+end)
+addAction("Follow", { "person-walking" }, function(p)
+	if not needOther(p) then
+		return
+	end
+	if plFollowing == p then
+		stopFollow()
+	else
+		startFollow(p)
+	end
+end, function(p)
+	return plFollowing == p
+end)
+addAction("Highlight", { "paint-brush" }, function(p)
+	setHighlight(p, plHighlights[p] == nil)
+end, function(p)
+	return plHighlights[p] ~= nil
+end)
+addAction("Inspect", { "person-magnifying-glass" }, function(p)
+	local ok = pcall(function()
+		guiService:InspectPlayerFromUserId(p.UserId)
+	end)
+	if not ok then
+		notify("Could not open the inspect menu", "error")
+	end
+end)
+addAction("Add Friend", { "person-plus" }, function(p)
+	if not needOther(p) then
+		return
+	end
+	local ok = pcall(function()
+		starterGui:SetCore("PromptSendFriendRequest", p)
+	end)
+	if not ok then
+		notify("Could not open the friend request prompt", "error")
+	end
+end)
+addAction("Block", { "person-circle-slash" }, function(p)
+	if not needOther(p) then
+		return
+	end
+	local ok = pcall(function()
+		starterGui:SetCore("PromptBlockPlayer", p)
+	end)
+	if not ok then
+		notify("Could not open the block prompt", "error")
+	end
+end)
+addAction("Copy Username", { "at-sign" }, function(p)
+	copyText(p.Name, "username")
+end)
+addAction("Copy Display", { "person" }, function(p)
+	copyText(p.DisplayName, "display name")
+end)
+addAction("Copy User ID", { "hashtag" }, function(p)
+	copyText(p.UserId, "user ID")
+end)
+addAction("Copy Profile", { "chain-link" }, function(p)
+	copyText("https://www.roblox.com/users/" .. p.UserId .. "/profile", "profile link")
+end)
+addAction("Copy Position", { "location-pin" }, function(p)
+	local r = rootOf(p)
+	if not r then
+		notify("No character to read a position from", "warn")
+		return
+	end
+	local v = r.Position
+	copyText(string.format("%.1f, %.1f, %.1f", v.X, v.Y, v.Z), "position")
+end)
+addAction("Equipped Tool", { "backpack" }, function(p)
+	local tool = p.Character and p.Character:FindFirstChildOfClass("Tool")
+	notify(p.DisplayName .. ": " .. (tool and tool.Name or "no tool equipped"), "info")
+end)
+
+local function makeRow(p)
+	local row = new("TextButton", {
+		Size = UDim2.new(1, 0, 0, 52),
+		BackgroundColor3 = C.dim,
+		BackgroundTransparency = 0.4,
+		AutoButtonColor = false,
+		Text = "",
+	}, UI.plList)
+	corner(row, 8)
+	local avatar = new("ImageLabel", {
+		Size = UDim2.fromOffset(40, 40),
+		Position = UDim2.new(0, 6, 0.5, -20),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+		Image = string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=48&h=48", p.UserId),
+	}, row)
+	corner(avatar, 20)
+	local nameL = new("TextLabel", {
+		Position = UDim2.new(0, 54, 0, 8),
+		Size = UDim2.new(1, -124, 0, 18),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local userL = new("TextLabel", {
+		Position = UDim2.new(0, 54, 0, 27),
+		Size = UDim2.new(1, -124, 0, 16),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local distL = new("TextLabel", {
+		Position = UDim2.new(1, -68, 0, 0),
+		Size = UDim2.new(0, 62, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+	row.MouseButton1Click:Connect(function()
+		selectPlayer(p)
+	end)
+	plRows[p] = { row = row, name = nameL, user = userL, dist = distL }
+end
+
+updatePlayers = function()
+	local list = players:GetPlayers()
+	local present = {}
+	for _, p in ipairs(list) do
+		present[p] = true
+		if not plRows[p] then
+			makeRow(p)
+		end
+	end
+	for p, r in pairs(plRows) do
+		if not present[p] then
+			r.row:Destroy()
+			plRows[p] = nil
+			if plSelected == p then
+				selectPlayer(nil)
+			end
+		end
+	end
+	local query = UI.plSearch.Text:lower()
+	local entries = {}
+	for _, p in ipairs(list) do
+		local r = plRows[p]
+		local dist = distanceTo(p)
+		local suffix = p == localPlayer and " (You)" or ""
+		r.name.Text = (settings.playerDisplayNames and p.DisplayName or p.Name) .. suffix
+		r.user.Text = settings.playerDisplayNames and ("@" .. p.Name) or ("ID " .. p.UserId)
+		r.dist.Text = (settings.playerDistance and dist) and (math.floor(dist) .. " studs") or ""
+		local match = query == "" or p.Name:lower():find(query, 1, true) or p.DisplayName:lower():find(query, 1, true)
+		r.row.Visible = match and true or false
+		entries[#entries + 1] = { p = p, dist = dist or math.huge }
+	end
+	local mode = settings.playerSort
+	table.sort(entries, function(a, b)
+		local aSelf, bSelf = a.p == localPlayer, b.p == localPlayer
+		if aSelf ~= bSelf then
+			return aSelf
+		end
+		if mode == 3 and a.dist ~= b.dist then
+			return a.dist < b.dist
+		end
+		if mode == 2 then
+			local x, y = a.p.DisplayName:lower(), b.p.DisplayName:lower()
+			if x ~= y then
+				return x < y
+			end
+		end
+		return a.p.Name:lower() < b.p.Name:lower()
+	end)
+	for i, e in ipairs(entries) do
+		plRows[e.p].row.LayoutOrder = i
+	end
+	if plSelected then
+		updatePanel()
+	end
+	updateActionStates()
+	styleRows()
+end
+
+end)()
+local musicTracks, musicVisible, musicQueue, musicHistory, musicCurrent, musicFilter, musicLoadToken, musicAssets, musicRows, musicChips, musicSleepAt, musicSleepSong, musicSleepChoice, musicFavSet, musicAcc, musicSound, musicSpeeds, musicSleeps, musicPresets, fmtTime, targetVolume, rebuildFavSet, applyEffects, makeSlider, musicRefreshBtn, musicAddBtn, artTint, musicHeartBtn, musicHeartIcon, musicSeek, musicShuffleBtn, musicShuffleIcon, musicPrevBtn, musicBackBtn, musicFwdBtn, musicNextBtn, musicRepeatBtn, musicRepeatIcon, musicRepeatBadge, musicMuteBtn, musicMuteIcon
+;(function()
+UI.plSearch:GetPropertyChangedSignal("Text"):Connect(function()
+	updatePlayers()
+end)
+plRefreshBtn.MouseButton1Click:Connect(function()
+	updatePlayers()
+	notify("Player list refreshed", "success")
+end)
+plEspBtn.MouseButton1Click:Connect(function()
+	setAllHighlights(not plAllHighlight)
+end)
+
+track(players.PlayerAdded:Connect(function(p)
+	if plAllHighlight then
+		task.defer(setHighlight, p, true)
+	end
+	task.delay(0.2, updatePlayers)
+end))
+track(players.PlayerRemoving:Connect(function(p)
+	setHighlight(p, false)
+	if plSpectating == p then
+		stopSpectate()
+	end
+	if plFollowing == p then
+		stopFollow()
+	end
+	task.delay(0.2, updatePlayers)
+end))
+task.spawn(function()
+	while running do
+		task.wait(math.max(0.25, settings.playerRefresh))
+		if running and UI.playersPage.Visible and UI.content.Visible then
+			updatePlayers()
+		end
+	end
+end)
+bind("accent", function()
+	styleRows()
+	updateActionStates()
+	plEspBtn.BackgroundColor3 = plAllHighlight and accent() or C.card
+end, true)
+
+UI.workspacePage = new("Frame", { Name = "WorkspacePage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+
+local wsPath = type(settings.wsLast) == "string" and settings.wsLast or ""
+UI.wsNav = { back = {}, order = {}, top = false }
+local wsSelected = nil
+local wsRows = {}
+local wsLastClick = { path = nil, t = 0 }
+local wsActionButtons = {}
+local wsCache = { path = nil, entries = nil }
+local wsRefreshToken, wsSelToken = 0, 0
+
+local function wsJoin(dir, name)
+	return fsJoin(dir, name)
+end
+local function wsExt(name)
+	return fsExt(name)
+end
+local function wsSize(n)
+	if n < 1024 then
+		return n .. " B"
+	end
+	if n < 1048576 then
+		return string.format("%.1f KB", n / 1024)
+	end
+	return string.format("%.2f MB", n / 1048576)
+end
+local function wsSafeName(name)
+	name = tostring(name or "")
+	name = name:gsub('[\\/:*?"<>|]', "")
+	return name:match("^%s*(.-)%s*$")
+end
+local function wsStripExt(name)
+	return fsStripExt(name)
+end
+local function wsIconFor(name, isDir)
+	if isDir then
+		return "folder"
+	end
+	local e = wsExt(name)
+	if e == "lua" or e == "luau" then
+		return "luau"
+	elseif e == "txt" or e == "md" or e == "log" then
+		return "page"
+	elseif e == "json" then
+		return "rectangle-list"
+	elseif e == "png" or e == "jpg" or e == "jpeg" or e == "webp" or e == "gif" then
+		return "image"
+	elseif e == "mp3" or e == "ogg" then
+		return "music-note"
+	end
+	return "file-box"
+end
+local function wsUnique(dir, name)
+	return fsUnique(dir, name)
+end
+local function wsList(dir)
+	return fsList(dir)
+end
+local function wsRead(path)
+	return fsRead(path)
+end
+local function wsCopy(text, what)
+	if setclipboard then
+		pcall(setclipboard, tostring(text))
+		notify("Copied " .. what, "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end
+
+local wsSearchFrame = new("Frame", {
+	Position = UDim2.new(0, 24, 0, 16),
+	Size = UDim2.new(0, 304, 0, 40),
+	BackgroundColor3 = C.card,
+}, UI.workspacePage)
+corner(wsSearchFrame, 8)
+local wsSearchIcon = newIcon(wsSearchFrame, { "magnifying-glass" }, false, 18, C.sub)
+wsSearchIcon.Position = UDim2.new(0, 10, 0.5, -11)
+UI.wsSearch = new("TextBox", {
+	Position = UDim2.new(0, 38, 0, 0),
+	Size = UDim2.new(1, -46, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	PlaceholderText = "Search files...",
+	PlaceholderColor3 = C.sub,
+	TextColor3 = C.text,
+	TextSize = 15,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+}, wsSearchFrame)
+
+local function wsToolbarBtn(icon, index)
+	local b = iconBtn("", icon, 38, UI.workspacePage, 36, false)
+	b.Position = UDim2.new(0, 24 + (index - 1) * 42, 0, 64)
+	return b
+end
+local wsBackBtn = wsToolbarBtn({ "arrow-medium-left", "chevron-small-left", "arrow-left" }, 1)
+local wsRootBtn = wsToolbarBtn({ "house" }, 2)
+local wsUpBtn = wsToolbarBtn({ "arrow-medium-up" }, 3)
+local wsRefreshBtn = wsToolbarBtn({ "arrow-rotate-right" }, 4)
+local wsNewFolderBtn = wsToolbarBtn({ "folder" }, 5)
+local wsNewFileBtn = wsToolbarBtn({ "page" }, 6)
+local wsSaveHereBtn = wsToolbarBtn({ "floppy-disk" }, 7)
+
+UI.wsCrumbs = new("ScrollingFrame", {
+	Name = "WorkspaceCrumbs",
+	Position = UDim2.new(0, 24, 0, 106),
+	Size = UDim2.new(0, 304, 0, 22),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+}, UI.workspacePage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 0) }, UI.wsCrumbs)
+
+UI.wsList = new("ScrollingFrame", {
+	Position = UDim2.new(0, 24, 0, 132),
+	Size = UDim2.new(0, 304, 1, -156),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.workspacePage)
+corner(UI.wsList, 8)
+padding(UI.wsList, 6, 6, 6, 6)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, UI.wsList)
+
+UI.wsCount = new("TextLabel", {
+	Position = UDim2.new(0, 24, 1, -22),
+	Size = UDim2.new(0, 304, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.workspacePage)
+
+UI.wsPanel = new("Frame", {
+	Position = UDim2.new(0, 344, 0, 16),
+	Size = UDim2.new(1, -368, 1, -40),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+}, UI.workspacePage)
+corner(UI.wsPanel, 8)
+UI.wsEmpty = new("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "Select a file or folder",
+	TextColor3 = C.sub,
+	TextSize = 16,
+	FontFace = sans(),
+}, UI.wsPanel)
+UI.wsContent = new("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.wsPanel)
+UI.wsIcon = newIcon(UI.wsContent, { "folder" }, true, 36, C.text)
+UI.wsIcon.Position = UDim2.new(0, 16, 0, 14)
+UI.wsName = new("TextLabel", {
+	Position = UDim2.new(0, 68, 0, 12),
+	Size = UDim2.new(1, -84, 0, 28),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.text,
+	TextSize = 20,
+	FontFace = sans(),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.wsContent)
+UI.wsMeta = new("TextLabel", {
+	Position = UDim2.new(0, 68, 0, 42),
+	Size = UDim2.new(1, -84, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 14,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.wsContent)
+UI.wsFullPath = new("TextLabel", {
+	Position = UDim2.new(0, 16, 0, 72),
+	Size = UDim2.new(1, -32, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.wsContent)
+UI.wsPreviewScroll = new("ScrollingFrame", {
+	Position = UDim2.new(0, 16, 0, 98),
+	Size = UDim2.new(1, -32, 0, 152),
+	BackgroundColor3 = C.dark,
+	BackgroundTransparency = 0.3,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.XY,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.XY,
+}, UI.wsContent)
+corner(UI.wsPreviewScroll, 8)
+padding(UI.wsPreviewScroll, 8, 8, 8, 8)
+UI.wsPreview = new("TextLabel", {
+	Size = UDim2.new(0, 0, 0, 0),
+	AutomaticSize = Enum.AutomaticSize.XY,
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = Color3.new(0.9, 0.9, 0.9),
+	TextSize = 12,
+	FontFace = MONO,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+}, UI.wsPreviewScroll)
+UI.wsActions = new("ScrollingFrame", {
+	Position = UDim2.new(0, 16, 0, 262),
+	Size = UDim2.new(1, -32, 1, -274),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.wsContent)
+new("UIGridLayout", {
+	CellSize = UDim2.fromOffset(142, 38),
+	CellPadding = UDim2.fromOffset(8, 8),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, UI.wsActions)
+
+local function wsAskName(title, default, callback)
+	ov.modal({
+		title = title,
+		fields = { { key = "name", placeholder = "Name...", text = default or "" } },
+		onSubmit = function(values, api)
+			local text = wsSafeName(values.name)
+			if text == "" then
+				api.status("Enter a name first", C.red)
+				return false
+			end
+			callback(text)
+			return true
+		end,
+	})
+end
+
+local function wsStyleRows()
+	for path, r in pairs(wsRows) do
+		local sel = wsSelected ~= nil and wsSelected.path == path
+		r.row.BackgroundColor3 = sel and accent() or C.dim
+		r.row.BackgroundTransparency = sel and 0.45 or 0.4
+	end
+end
+
+local function wsShowSelection()
+	wsSelToken += 1
+	local mine = wsSelToken
+	local e = wsSelected
+	UI.wsEmpty.Visible = e == nil
+	UI.wsContent.Visible = e ~= nil
+	if not hasFS then
+		UI.wsEmpty.Text = "Your executor does not support file system functions"
+		return
+	end
+	UI.wsEmpty.Text = "Select a file or folder"
+	if not e then
+		return
+	end
+	UI.wsIcon.Text = wsIconFor(e.name, e.isDir)
+	UI.wsIcon.FontFace = iconFont(e.isDir)
+	UI.wsName.Text = e.name
+	UI.wsFullPath.Text = "workspace/" .. e.path
+	if e.isDir then
+		UI.wsMeta.Text = "Folder"
+		UI.wsPreview.Text = ""
+		task.spawn(function()
+			local count = #wsList(e.path)
+			if mine == wsSelToken then
+				UI.wsMeta.Text = "Folder | " .. count .. " items"
+			end
+		end)
+		return
+	end
+	UI.wsMeta.Text = "File"
+	UI.wsPreview.Text = "Loading..."
+	task.spawn(function()
+		local data = wsRead(e.path)
+		if mine ~= wsSelToken then
+			return
+		end
+		if not data then
+			UI.wsMeta.Text = "File"
+			UI.wsPreview.Text = "Could not read this file"
+			return
+		end
+		UI.wsMeta.Text = (wsExt(e.name) ~= "" and (wsExt(e.name):upper() .. " file") or "File") .. " | " .. wsSize(#data)
+		if not settings.wsPreview then
+			UI.wsPreview.Text = "Previews are turned off in Settings"
+		elseif data:sub(1, 512):find("[\0-\8\14-\31]") or wsIconFor(e.name, false) == "music-note" then
+			UI.wsPreview.Text = "Binary file, no preview available"
+		elseif #data > 4000 then
+			UI.wsPreview.Text = data:sub(1, 4000) .. "\n..."
+		else
+			UI.wsPreview.Text = data
+		end
+	end)
+end
+
+function UI.wsNav.go(path, fromHistory)
+	path = path or ""
+	if path == wsPath then
+		refreshWorkspace()
+		return
+	end
+	local nav = UI.wsNav
+	if not fromHistory then
+		nav.back[#nav.back + 1] = wsPath
+		if #nav.back > 60 then
+			table.remove(nav.back, 1)
+		end
+	end
+	wsPath = path
+	wsSelected = nil
+	nav.top = true
+	setSetting("wsLast", wsPath)
+	if UI.wsSearch.Text ~= "" then
+		UI.wsSearch.Text = ""
+	else
+		refreshWorkspace()
+	end
+end
+function UI.wsNav.goBack()
+	local nav = UI.wsNav
+	local prev = table.remove(nav.back)
+	if prev ~= nil then
+		nav.go(prev, true)
+	end
+end
+function UI.wsNav.goUp()
+	UI.wsNav.go(fsParent(wsPath))
+end
+function UI.wsNav.drawCrumbs()
+	for _, child in ipairs(UI.wsCrumbs:GetChildren()) do
+		if child:IsA("TextButton") or child:IsA("TextLabel") then
+			child:Destroy()
+		end
+	end
+	local parts = { { "workspace", "" } }
+	local acc = ""
+	for seg in wsPath:gmatch("[^/]+") do
+		acc = acc == "" and seg or (acc .. "/" .. seg)
+		parts[#parts + 1] = { seg, acc }
+	end
+	for i, part in ipairs(parts) do
+		local last = i == #parts
+		if i > 1 then
+			new("TextLabel", {
+				AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.new(0, 0, 1, 0),
+				BackgroundTransparency = 1,
+				Text = "/",
+				TextColor3 = C.sub,
+				TextSize = 12,
+				FontFace = sans(Enum.FontWeight.Medium),
+				LayoutOrder = i * 2 - 1,
+			}, UI.wsCrumbs)
+		end
+		local btn = new("TextButton", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Text = part[1],
+			TextColor3 = last and C.text or C.sub,
+			TextSize = 12,
+			FontFace = sans(Enum.FontWeight.Medium),
+			LayoutOrder = i * 2,
+		}, UI.wsCrumbs)
+		padding(btn, 0, 3, 0, 3)
+		local target = part[2]
+		btn.MouseButton1Click:Connect(function()
+			UI.wsNav.go(target)
+		end)
+	end
+	task.defer(function()
+		UI.wsCrumbs.CanvasPosition = Vector2.new(100000, 0)
+	end)
+end
+function UI.wsNav.move(delta)
+	local nav = UI.wsNav
+	local count = #nav.order
+	if count == 0 then
+		return
+	end
+	local idx = 0
+	for i, e in ipairs(nav.order) do
+		if wsSelected and e.path == wsSelected.path then
+			idx = i
+			break
+		end
+	end
+	idx = math.clamp(idx + delta, 1, count)
+	wsSelected = nav.order[idx]
+	wsShowSelection()
+	wsStyleRows()
+	local viewH = UI.wsList.AbsoluteSize.Y / (UI.scaleValue or 1)
+	if type(viewH) ~= "number" or viewH < 40 then
+		viewH = 400
+	end
+	local rowTop = 6 + (idx - 1 + (wsPath ~= "" and 1 or 0)) * 46
+	local pos = UI.wsList.CanvasPosition.Y
+	if rowTop < pos then
+		UI.wsList.CanvasPosition = Vector2.new(0, math.max(0, rowTop - 6))
+	elseif rowTop + 42 > pos + viewH then
+		UI.wsList.CanvasPosition = Vector2.new(0, rowTop + 48 - viewH)
+	end
+end
+
+local function wsOpen(e)
+	if e.isDir then
+		UI.wsNav.go(e.path)
+		return
+	end
+	if fsParent(e.path) == FOLDER and wsExt(e.name) == "lua" then
+		local tabName = wsStripExt(e.name)
+		for i, d in ipairs(scriptData) do
+			if d.name == tabName then
+				loadTab(i)
+				goToPage("Executor")
+				return
+			end
+		end
+	end
+	local data = wsRead(e.path)
+	if not data then
+		notify("Could not read " .. e.name, "error")
+		return
+	end
+	addTab(wsStripExt(e.name), data)
+	if goToPage then
+		goToPage("Executor")
+	end
+end
+
+local function wsMakeRow(entry)
+	local row = new("TextButton", {
+		Size = UDim2.new(1, 0, 0, 42),
+		BackgroundColor3 = C.dim,
+		BackgroundTransparency = 0.4,
+		AutoButtonColor = false,
+		Text = "",
+	}, UI.wsList)
+	corner(row, 8)
+	local ic = newIcon(row, { wsIconFor(entry.name, entry.isDir) }, entry.isDir, 20, entry.isDir and C.text or C.sub)
+	ic.Position = UDim2.new(0, 12, 0.5, -12)
+	new("TextLabel", {
+		Position = UDim2.new(0, 46, 0, 0),
+		Size = UDim2.new(1, -110, 1, 0),
+		BackgroundTransparency = 1,
+		Text = entry.name,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	new("TextLabel", {
+		Position = UDim2.new(1, -60, 0, 0),
+		Size = UDim2.new(0, 52, 1, 0),
+		BackgroundTransparency = 1,
+		Text = entry.isDir and "" or wsExt(entry.name):upper(),
+		TextColor3 = C.sub,
+		TextSize = 11,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+	if entry.isDir then
+		local enter = new("TextButton", { Position = UDim2.new(1, -38, 0.5, -16), Size = UDim2.fromOffset(32, 32), BackgroundTransparency = 1, Text = "" }, row)
+		local chev = newIcon(enter, { "chevron-small-right" }, false, 18, C.sub)
+		chev.Position = UDim2.new(0.5, -11, 0.5, -11)
+		enter.MouseButton1Click:Connect(function()
+			UI.wsNav.go(entry.path)
+		end)
+	end
+	row.MouseButton1Click:Connect(function()
+		local now = os.clock()
+		if wsLastClick.path == entry.path and now - wsLastClick.t < 0.4 then
+			wsLastClick.path = nil
+			wsOpen(entry)
+			return
+		end
+		wsLastClick.path, wsLastClick.t = entry.path, now
+		wsSelected = entry
+		wsShowSelection()
+		wsStyleRows()
+	end)
+	return row
+end
+
+refreshWorkspace = function(useCache)
+	wsRefreshToken += 1
+	local mine = wsRefreshToken
+	local prevScroll = UI.wsList.CanvasPosition.Y
+	if type(prevScroll) ~= "number" then
+		prevScroll = 0
+	end
+	if not hasFS then
+		for _, child in ipairs(UI.wsList:GetChildren()) do
+			if child:IsA("GuiObject") then
+				child:Destroy()
+			end
+		end
+		wsRows = {}
+		wsSelected = nil
+		wsShowSelection()
+		return
+	end
+	local path = wsPath
+	local entries
+	if useCache and wsCache.path == path and wsCache.entries then
+		entries = wsCache.entries
+	else
+		if path ~= "" and not fsIsDir(path) then
+			if mine ~= wsRefreshToken then
+				return
+			end
+			wsPath = fsParent(path)
+			wsSelected = nil
+			refreshWorkspace()
+			return
+		end
+		entries = wsList(path)
+		if mine ~= wsRefreshToken then
+			return
+		end
+		wsCache.path, wsCache.entries = path, entries
+	end
+	for _, child in ipairs(UI.wsList:GetChildren()) do
+		if child:IsA("GuiObject") then
+			child:Destroy()
+		end
+	end
+	wsRows = {}
+	UI.wsNav.order = {}
+	if wsPath ~= "" then
+		local up = new("TextButton", {
+			Size = UDim2.new(1, 0, 0, 42),
+			BackgroundColor3 = C.dim,
+			BackgroundTransparency = 0.4,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = 0,
+		}, UI.wsList)
+		corner(up, 8)
+		local upIcon = newIcon(up, { "arrow-medium-up" }, false, 20, C.sub)
+		upIcon.Position = UDim2.new(0, 12, 0.5, -12)
+		new("TextLabel", {
+			Position = UDim2.new(0, 46, 0, 0),
+			Size = UDim2.new(1, -60, 1, 0),
+			BackgroundTransparency = 1,
+			Text = ".. parent folder",
+			TextColor3 = C.sub,
+			TextSize = 14,
+			FontFace = sans(),
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, up)
+		up.MouseButton1Click:Connect(UI.wsNav.goUp)
+	end
+	local query = UI.wsSearch.Text:lower()
+	local mode = settings.wsSort
+	table.sort(entries, function(a, b)
+		if a.isDir ~= b.isDir then
+			return a.isDir
+		end
+		local la, lb = a.name:lower(), b.name:lower()
+		if mode == 2 then
+			local ea, eb = wsExt(a.name), wsExt(b.name)
+			if ea ~= eb then
+				return ea < eb
+			end
+		end
+		if la ~= lb then
+			if mode == 3 then
+				return la > lb
+			end
+			return la < lb
+		end
+		return a.name < b.name
+	end)
+	local folders, files, shown = 0, 0, 0
+	local keep
+	for _, e in ipairs(entries) do
+		if e.isDir then
+			folders += 1
+		else
+			files += 1
+		end
+		if (query == "" or e.name:lower():find(query, 1, true)) and shown < 400 then
+			shown += 1
+			local row = wsMakeRow(e)
+			row.LayoutOrder = shown
+			UI.wsNav.order[shown] = e
+			wsRows[e.path] = { row = row, entry = e }
+			if wsSelected and wsSelected.path == e.path then
+				keep = e
+			end
+		end
+	end
+	wsSelected = keep
+	UI.wsNav.drawCrumbs()
+	local hidden = query == "" and (#entries - shown) or 0
+	UI.wsCount.Text = string.format("%d folders, %d files", folders, files) .. (hidden > 0 and (" | showing the first " .. shown) or "")
+	wsBackBtn.BackgroundTransparency = #UI.wsNav.back > 0 and 0.3 or 0.75
+	wsShowSelection()
+	wsStyleRows()
+	local scrollY = UI.wsNav.top and 0 or prevScroll
+	UI.wsNav.top = false
+	task.defer(function()
+		if mine == wsRefreshToken then
+			UI.wsList.CanvasPosition = Vector2.new(0, scrollY)
+		end
+	end)
+end
+
+local function wsAddAction(label, icon, fn)
+	local b = iconBtn(label, icon, 142, UI.wsActions, 38, false, 13)
+	b.LayoutOrder = #wsActionButtons + 1
+	table.insert(wsActionButtons, b)
+	b.MouseButton1Click:Connect(function()
+		if wsSelected then
+			fn(wsSelected)
+		end
+	end)
+	return b
+end
+local function needFile(e)
+	if e.isDir then
+		notify("That's a folder", "warn")
+		return false
+	end
+	return true
+end
+
+wsAddAction("Open", { "arrow-up-right-from-square" }, wsOpen)
+wsAddAction("Run", { "play-small" }, function(e)
+	if not needFile(e) then
+		return
+	end
+	local data = wsRead(e.path)
+	if data then
+		runSource(data, e.name)
+	else
+		notify("Could not read " .. e.name, "error")
+	end
+end)
+wsAddAction("Pin Quick", { "pin" }, function(e)
+	if not needFile(e) then
+		return
+	end
+	local data = wsRead(e.path)
+	if not data then
+		notify("Could not read " .. e.name, "error")
+		return
+	end
+	local list = settings.pinned
+	table.insert(list, { name = wsStripExt(e.name), source = data })
+	setSetting("pinned", list)
+	rebuildQuick()
+	notify("Pinned '" .. e.name .. "' to Quick Scripts", "success")
+end)
+wsAddAction("Copy Path", { "chain-link" }, function(e)
+	wsCopy(e.path, "path")
+end)
+wsAddAction("Copy Contents", { "two-stacked-squares" }, function(e)
+	if not needFile(e) then
+		return
+	end
+	local data = wsRead(e.path)
+	if data then
+		wsCopy(data, "file contents")
+	else
+		notify("Could not read " .. e.name, "error")
+	end
+end)
+wsAddAction("Copy Loader", { "code" }, function(e)
+	if not needFile(e) then
+		return
+	end
+	wsCopy('loadstring(readfile("' .. e.path .. '"))()', "loader snippet")
+end)
+wsAddAction("Rename", { "pencil-square" }, function(e)
+	wsAskName("Rename " .. (e.isDir and "folder" or "file"), e.name, function(newName)
+		if newName == e.name then
+			return
+		end
+		local newPath = wsJoin(fsParent(e.path), newName)
+		if fsIsFile(newPath) or fsIsDir(newPath) then
+			notify("That name already exists", "warn")
+			return
+		end
+		local _, failed = fsCopyTree(e.path, newPath, true)
+		if failed == 0 then
+			wsSelected = { name = newName, path = newPath, isDir = e.isDir }
+			refreshWorkspace()
+			notify("Renamed to " .. newName, "success")
+		else
+			refreshWorkspace()
+			notify("Could not rename " .. e.name, "error")
+		end
+	end)
+end)
+wsAddAction("Duplicate", { "stacked-squares-plus" }, function(e)
+	local base, ext = e.name:match("^(.*)(%.[^%.]+)$")
+	if not base or e.isDir then
+		base, ext = e.name, ""
+	end
+	local newName = wsUnique(fsParent(e.path), base .. " copy" .. ext)
+	local _, failed = fsCopyTree(e.path, wsJoin(fsParent(e.path), newName), false)
+	refreshWorkspace()
+	if failed == 0 then
+		notify("Created " .. newName, "success")
+	else
+		notify("Could not duplicate " .. e.name, "error")
+	end
+end)
+wsAddAction("Add To Music", { "music-note" }, function(e)
+	if e.isDir or (wsExt(e.name) ~= "mp3" and wsExt(e.name) ~= "ogg") then
+		notify("Pick an .mp3 or .ogg file", "warn")
+		return
+	end
+	local target = wsJoin(MUSIC_DIR, wsUnique(MUSIC_DIR, e.name))
+	if fsCopyFile(e.path, target, false) then
+		if rescanMusic then
+			rescanMusic()
+		end
+		notify("Copied " .. e.name .. " to your music library", "success")
+	else
+		notify("Could not copy " .. e.name, "error")
+	end
+end)
+
+local function wsDoDelete(e)
+	local ok = fsDeleteTree(e.path)
+	if ok then
+		notify("Deleted " .. e.name, "success")
+	else
+		notify("Could not delete " .. e.name, "error")
+	end
+	wsSelected = nil
+	refreshWorkspace()
+end
+local wsDeleteBtn = wsAddAction("Delete", { "trash-can" }, function(e)
+	if not settings.wsConfirm then
+		wsDoDelete(e)
+		return
+	end
+	ov.modal({
+		title = "Delete " .. e.name .. "?",
+		desc = e.isDir and "The folder and everything inside it will be removed permanently." or "This file will be removed permanently.",
+		okText = "Delete",
+		okIcon = "trash-can",
+		danger = true,
+		onSubmit = function()
+			wsDoDelete(e)
+			return true
+		end,
+	})
+end)
+
+wsBackBtn.MouseButton1Click:Connect(UI.wsNav.goBack)
+wsRootBtn.MouseButton1Click:Connect(function()
+	UI.wsNav.go("")
+end)
+wsUpBtn.MouseButton1Click:Connect(UI.wsNav.goUp)
+wsRefreshBtn.MouseButton1Click:Connect(function()
+	refreshWorkspace()
+end)
+wsNewFolderBtn.MouseButton1Click:Connect(function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	wsAskName("New folder", "", function(name)
+		if isfolder(wsJoin(wsPath, name)) or isfile(wsJoin(wsPath, name)) then
+			notify("That name already exists", "warn")
+			return
+		end
+		if pcall(makefolder, wsJoin(wsPath, name)) then
+			refreshWorkspace()
+		else
+			notify("Could not create the folder", "error")
+		end
+	end)
+end)
+wsNewFileBtn.MouseButton1Click:Connect(function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	wsAskName("New file", "script.lua", function(name)
+		local final = wsUnique(wsPath, name)
+		if pcall(writefile, wsJoin(wsPath, final), "") then
+			wsSelected = { name = final, path = wsJoin(wsPath, final), isDir = false }
+			refreshWorkspace()
+		else
+			notify("Could not create the file", "error")
+		end
+	end)
+end)
+wsSaveHereBtn.MouseButton1Click:Connect(function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	local d = currentData()
+	if not d then
+		return
+	end
+	local final = wsUnique(wsPath, d.name .. ".lua")
+	if pcall(writefile, wsJoin(wsPath, final), lastText) then
+		wsSelected = { name = final, path = wsJoin(wsPath, final), isDir = false }
+		refreshWorkspace()
+		notify("Saved the editor script as " .. final, "success")
+	else
+		notify("Could not save the script here", "error")
+	end
+end)
+UI.wsSearch:GetPropertyChangedSignal("Text"):Connect(function()
+	refreshWorkspace(true)
+end)
+track(userInputService.InputBegan:Connect(function(input, processed)
+	if processed or input.UserInputType ~= Enum.UserInputType.Keyboard then
+		return
+	end
+	if not (UI.workspacePage.Visible and UI.content.Visible) or userInputService:GetFocusedTextBox() ~= nil then
+		return
+	end
+	local key = input.KeyCode
+	if key == Enum.KeyCode.Backspace then
+		UI.wsNav.goUp()
+	elseif key == Enum.KeyCode.Return or key == Enum.KeyCode.KeypadEnter then
+		if wsSelected then
+			wsOpen(wsSelected)
+		end
+	elseif key == Enum.KeyCode.Down or key == Enum.KeyCode.Up then
+		UI.wsNav.move(key == Enum.KeyCode.Down and 1 or -1)
+	end
+end))
+bind("wsSort", function()
+	if UI.workspacePage.Visible then
+		refreshWorkspace(true)
+	end
+end, true)
+bind("wsPreview", function()
+	if wsSelected then
+		wsShowSelection()
+	end
+end, true)
+bind("accent", wsStyleRows, true)
+
+UI.musicPage = new("Frame", { Name = "MusicPage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+
+musicTracks, musicVisible, musicQueue, musicHistory = {}, {}, {}, {}
+musicCurrent, musicFilter, musicLoadToken = nil, "all", 0
+musicAssets, musicRows, musicChips = {}, {}, {}
+musicSleepAt, musicSleepSong, musicSleepChoice, musicFavSet = nil, false, 0, {}
+musicAcc = 0
+musicSound = new("Sound", { Name = "BasesMusic", Volume = 0.6, Looped = false }, soundService)
+
+musicSpeeds = { 0.25, 0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3 }
+musicSleeps = { 5, 10, 15, 20, 30, 45, 60, 90, 120 }
+musicPresets = {
+	{ name = "Normal" },
+	{ name = "Bass Boost", eq = { LowGain = 8, MidGain = 0, HighGain = 0 } },
+	{ name = "Treble Boost", eq = { LowGain = -2, MidGain = 0, HighGain = 6 } },
+	{ name = "Vocal Boost", eq = { LowGain = -5, MidGain = 5, HighGain = 1 } },
+	{ name = "Muffled", eq = { LowGain = 3, MidGain = -12, HighGain = -40 } },
+	{ name = "Hall Reverb", reverb = { DecayTime = 3.5, Density = 1, Diffusion = 1, DryLevel = -2, WetLevel = -4 } },
+	{ name = "Echo", echo = { Delay = 0.3, Feedback = 0.4, DryLevel = 0, WetLevel = -6 } },
+}
+
+function fmtTime(s)
+	s = math.max(0, s or 0)
+	return string.format("%d:%02d", math.floor(s / 60), math.floor(s % 60))
+end
+function targetVolume()
+	return settings.musicMuted and 0 or settings.musicVolume
+end
+function rebuildFavSet()
+	musicFavSet = {}
+	for _, p in ipairs(settings.musicFavorites) do
+		musicFavSet[p] = true
+	end
+end
+rebuildFavSet()
+
+function applyEffects()
+	for _, c in ipairs(musicSound:GetChildren()) do
+		if c.Name == "BasesFx" then
+			c:Destroy()
+		end
+	end
+	local preset = musicPresets[settings.musicPreset] or musicPresets[1]
+	local function addFx(class, props)
+		local fx = Instance.new(class)
+		fx.Name = "BasesFx"
+		for k, v in pairs(props) do
+			fx[k] = v
+		end
+		fx.Parent = musicSound
+	end
+	if settings.musicKeepPitch and settings.musicSpeed ~= 1 then
+		addFx("PitchShiftSoundEffect", { Octave = math.clamp(1 / settings.musicSpeed, 0.5, 2) })
+	end
+	if preset.eq then
+		addFx("EqualizerSoundEffect", preset.eq)
+	end
+	if preset.reverb then
+		addFx("ReverbSoundEffect", preset.reverb)
+	end
+	if preset.echo then
+		addFx("EchoSoundEffect", preset.echo)
+	end
+end
+
+function makeSlider(parent, position, size, onChange, onCommit)
+	local holder = new("Frame", { Position = position, Size = size, BackgroundTransparency = 1 }, parent)
+	local bar = new("Frame", {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 0, 0.5, 0),
+		Size = UDim2.new(1, 0, 0, 6),
+		BackgroundColor3 = Color3.new(0.2, 0.2, 0.25),
+		BorderSizePixel = 0,
+	}, holder)
+	corner(bar, 3)
+	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = accent(), BorderSizePixel = 0 }, bar)
+	corner(fill, 3)
+	local knob = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(14, 14),
+		Position = UDim2.new(0, 0, 0.5, 0),
+		BackgroundColor3 = C.text,
+		BorderSizePixel = 0,
+	}, bar)
+	corner(knob, 7)
+	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) }, holder)
+	local obj = { dragging = false, alpha = 0, fill = fill }
+	function obj.set(a)
+		a = math.clamp(a, 0, 1)
+		obj.alpha = a
+		fill.Size = UDim2.new(a, 0, 1, 0)
+		knob.Position = UDim2.new(a, 0, 0.5, 0)
+	end
+	local function fromX(x)
+		obj.set((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1))
+		if onChange then
+			onChange(obj.alpha)
+		end
+	end
+	hit.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			obj.dragging = true
+			env.BasesSliderDrag = fromX
+			fromX(input.Position.X)
+		end
+	end)
+	function obj.finish()
+		if obj.dragging then
+			obj.dragging = false
+			if onCommit then
+				onCommit(obj.alpha)
+			end
+		end
+	end
+	return obj
+end
+
+local musicSearchFrame = new("Frame", {
+	Position = UDim2.new(0, 24, 0, 16),
+	Size = UDim2.new(0, 198, 0, 40),
+	BackgroundColor3 = C.card,
+}, UI.musicPage)
+corner(musicSearchFrame, 8)
+local musicSearchIcon = newIcon(musicSearchFrame, { "magnifying-glass" }, false, 18, C.sub)
+musicSearchIcon.Position = UDim2.new(0, 10, 0.5, -11)
+UI.musicSearch = new("TextBox", {
+	Position = UDim2.new(0, 38, 0, 0),
+	Size = UDim2.new(1, -46, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "",
+	PlaceholderText = "Search songs...",
+	PlaceholderColor3 = C.sub,
+	TextColor3 = C.text,
+	TextSize = 15,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	ClearTextOnFocus = false,
+}, musicSearchFrame)
+musicRefreshBtn = iconBtn("", { "arrow-rotate-right" }, 40, UI.musicPage, 40, false)
+musicRefreshBtn.Position = UDim2.new(0, 230, 0, 16)
+musicAddBtn = iconBtn("", { "cloud-arrow-down" }, 40, UI.musicPage, 40, true)
+musicAddBtn.Position = UDim2.new(0, 276, 0, 16)
+UI.musicYtBtn = iconBtn("", { "youtube" }, 40, UI.musicPage, 40, false)
+UI.musicYtBtn.Position = UDim2.new(0, 322, 0, 16)
+
+UI.musicChips = new("ScrollingFrame", {
+	Position = UDim2.new(0, 24, 0, 64),
+	Size = UDim2.new(0, 340, 0, 34),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.X,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.X,
+}, UI.musicPage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, UI.musicChips)
+
+UI.musicList = new("ScrollingFrame", {
+	Position = UDim2.new(0, 24, 0, 106),
+	Size = UDim2.new(0, 340, 1, -130),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 4,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, UI.musicPage)
+corner(UI.musicList, 8)
+padding(UI.musicList, 6, 6, 6, 6)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 4) }, UI.musicList)
+UI.musicEmpty = new("TextLabel", {
+	Position = UDim2.new(0, 24, 0, 150),
+	Size = UDim2.new(0, 340, 0, 80),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 14,
+	FontFace = sans(),
+	TextWrapped = true,
+	Visible = false,
+}, UI.musicPage)
+UI.musicFooter = new("TextLabel", {
+	Position = UDim2.new(0, 24, 1, -22),
+	Size = UDim2.new(0, 340, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.musicPage)
+
+UI.musicPanel = new("Frame", {
+	Position = UDim2.new(0, 380, 0, 16),
+	Size = UDim2.new(1, -404, 1, -40),
+	BackgroundColor3 = C.card,
+	BackgroundTransparency = 0.6,
+	BorderSizePixel = 0,
+}, UI.musicPage)
+corner(UI.musicPanel, 8)
+
+function artTint(amount)
+	return accent():Lerp(Color3.fromRGB(24, 24, 30), amount)
+end
+UI.musicArt = new("Frame", {
+	Position = UDim2.new(0, 20, 0, 20),
+	Size = UDim2.fromOffset(150, 150),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+}, UI.musicPanel)
+corner(UI.musicArt, 16)
+UI.musicArtGradient = new("UIGradient", {
+	Color = ColorSequence.new(artTint(0.66), artTint(0.9)),
+	Rotation = 55,
+}, UI.musicArt)
+new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.92, Thickness = 1 }, UI.musicArt)
+for _, ringInfo in ipairs({ { 120, 0.94 }, { 84, 0.9 } }) do
+	local ring = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.fromOffset(ringInfo[1], ringInfo[1]),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, UI.musicArt)
+	corner(ring, ringInfo[1] / 2)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = ringInfo[2], Thickness = 2 }, ring)
+end
+UI.musicArtIcon = newIcon(UI.musicArt, { "music-note" }, true, 52, C.text)
+UI.musicArtIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+UI.musicArtIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+UI.musicArtIcon.Size = UDim2.fromOffset(60, 60)
+UI.musicArtIcon.TextTransparency = 0.2
+
+UI.musicTitle = new("TextLabel", {
+	Position = UDim2.new(0, 190, 0, 20),
+	Size = UDim2.new(1, -210, 0, 54),
+	BackgroundTransparency = 1,
+	Text = "Nothing playing",
+	TextColor3 = C.text,
+	TextSize = 20,
+	FontFace = sans(),
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.musicPanel)
+UI.musicSub = new("TextLabel", {
+	Position = UDim2.new(0, 190, 0, 78),
+	Size = UDim2.new(1, -210, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 14,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.musicPanel)
+UI.musicMeta = new("TextLabel", {
+	Position = UDim2.new(0, 190, 0, 100),
+	Size = UDim2.new(1, -210, 0, 16),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.musicPanel)
+musicHeartBtn, musicHeartIcon = iconBtn("", { "heart" }, 36, UI.musicPanel, 36, false)
+musicHeartBtn.Position = UDim2.new(0, 190, 0, 130)
+
+UI.musicCur = new("TextLabel", {
+	Position = UDim2.new(0, 20, 0, 184),
+	Size = UDim2.new(0, 48, 0, 24),
+	BackgroundTransparency = 1,
+	Text = "0:00",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, UI.musicPanel)
+UI.musicTotal = new("TextLabel", {
+	Position = UDim2.new(1, -68, 0, 184),
+	Size = UDim2.new(0, 48, 0, 24),
+	BackgroundTransparency = 1,
+	Text = "0:00",
+	TextColor3 = C.sub,
+	TextSize = 12,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Right,
+}, UI.musicPanel)
+musicSeek = makeSlider(UI.musicPanel, UDim2.new(0, 76, 0, 184), UDim2.new(1, -152, 0, 24), function(a)
+	UI.musicCur.Text = fmtTime(a * musicSound.TimeLength)
+end, function(a)
+	if musicSound.TimeLength > 0 then
+		musicSound.TimePosition = a * musicSound.TimeLength
+	end
+end)
+
+UI.musicTransport = new("Frame", {
+	Position = UDim2.new(0, 0, 0, 220),
+	Size = UDim2.new(1, 0, 0, 58),
+	BackgroundTransparency = 1,
+}, UI.musicPanel)
+new("UIListLayout", {
+	FillDirection = Enum.FillDirection.Horizontal,
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	VerticalAlignment = Enum.VerticalAlignment.Center,
+	Padding = UDim.new(0, 10),
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, UI.musicTransport)
+local function transportBtn(text, icon, w, order)
+	local b, ic = iconBtn(text, icon, w, UI.musicTransport, 40, false)
+	b.LayoutOrder = order
+	return b, ic
+end
+musicShuffleBtn, musicShuffleIcon = transportBtn("", { "two-arrows-switch-right" }, 40, 1)
+musicPrevBtn = transportBtn("", { "skip-previous-small" }, 40, 2)
+musicBackBtn = transportBtn("10", { "arrow-curved-path-left" }, 54, 3)
+UI.musicPlayBtn = new("TextButton", { Size = UDim2.fromOffset(56, 56), Text = "", AutoButtonColor = false, LayoutOrder = 4 }, UI.musicTransport)
+corner(UI.musicPlayBtn, 28)
+accentize(UI.musicPlayBtn)
+UI.musicPlayIcon = newIcon(UI.musicPlayBtn, { "play-large" }, true, 26, Color3.new(1, 1, 1))
+UI.musicPlayIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+UI.musicPlayIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+musicFwdBtn = transportBtn("10", { "arrow-curved-path-right" }, 54, 5)
+musicNextBtn = transportBtn("", { "skip-next-small" }, 40, 6)
+musicRepeatBtn, musicRepeatIcon = transportBtn("", { "two-arrows-loop-clockwise" }, 40, 7)
+musicRepeatBadge = new("TextLabel", {
+	Position = UDim2.new(1, -14, 1, -16),
+	Size = UDim2.fromOffset(12, 12),
+	BackgroundTransparency = 1,
+	Text = "1",
+	TextColor3 = C.text,
+	TextSize = 11,
+	FontFace = sans(),
+	Visible = false,
+	ZIndex = 3,
+}, musicRepeatBtn)
+
+musicMuteBtn, musicMuteIcon = iconBtn("", { "speaker" }, 36, UI.musicPanel, 36, false)
+end)()
+;(function()
+musicMuteBtn.Position = UDim2.new(0, 20, 0, 290)
+UI.musicVolLabel = new("TextLabel", {
+	Position = UDim2.new(1, -72, 0, 290),
+	Size = UDim2.new(0, 52, 0, 36),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 13,
+	FontFace = sans(),
+	TextXAlignment = Enum.TextXAlignment.Right,
+}, UI.musicPanel)
+local musicVol = makeSlider(UI.musicPanel, UDim2.new(0, 68, 0, 290), UDim2.new(1, -148, 0, 36), function(a)
+	setSetting("musicVolume", tonumber(string.format("%.2f", a)))
+	if settings.musicMuted and a > 0 then
+		setSetting("musicMuted", false)
+	end
+end, nil)
+
+UI.musicChoices = new("Frame", { Position = UDim2.new(0, 20, 0, 338), Size = UDim2.new(1, -40, 0, 36), BackgroundTransparency = 1 }, UI.musicPanel)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, UI.musicChoices)
+local function choiceBtn(icon, order)
+	local b, ic, lbl = iconBtn("-", icon, 128, UI.musicChoices, 36, false, 13)
+	b.LayoutOrder = order
+	return b, ic, lbl
+end
+local musicSpeedBtn, musicSpeedIc, musicSpeedLbl = choiceBtn({ "speedometer" }, 1)
+local musicPresetBtn, musicPresetIc, musicPresetLbl = choiceBtn({ "three-sliders-horizontal" }, 2)
+local musicSleepBtn, musicSleepIc, musicSleepLbl = choiceBtn({ "moon" }, 3)
+musicSpeedBtn.Size = UDim2.new(0, 112, 0, 36)
+musicPresetBtn.Size = UDim2.new(0, 160, 0, 36)
+musicSleepBtn.Size = UDim2.new(0, 112, 0, 36)
+musicSleepLbl.Text = "Sleep: Off"
+
+UI.musicNext = new("TextLabel", {
+	Position = UDim2.new(0, 20, 0, 388),
+	Size = UDim2.new(1, -40, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "",
+	TextColor3 = C.sub,
+	TextSize = 13,
+	FontFace = sans(Enum.FontWeight.Medium),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextTruncate = Enum.TextTruncate.AtEnd,
+}, UI.musicPanel)
+UI.musicTip = new("TextLabel", {
+	Position = UDim2.new(0, 20, 0, 410),
+	Size = UDim2.new(1, -40, 0, 28),
+	BackgroundTransparency = 1,
+	Text = "Put .mp3 or .ogg files in workspace/" .. MUSIC_DIR .. " (subfolders become playlists), then press Refresh.",
+	TextColor3 = C.sub,
+	TextSize = 11,
+	FontFace = sans(Enum.FontWeight.Regular),
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+}, UI.musicPanel)
+
+do
+	local M = {}
+	local GENRES = {
+		[0] = "Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop", "Jazz", "Metal",
+		"New Age", "Oldies", "Other", "Pop", "R&B", "Rap", "Reggae", "Rock", "Techno", "Industrial",
+		"Alternative", "Ska", "Death Metal", "Pranks", "Soundtrack", "Euro-Techno", "Ambient", "Trip-Hop", "Vocal", "Jazz+Funk",
+		"Fusion", "Trance", "Classical", "Instrumental", "Acid", "House", "Game", "Sound Clip", "Gospel", "Noise",
+		"Alt Rock", "Bass", "Soul", "Punk", "Space", "Meditative", "Instrumental Pop", "Instrumental Rock", "Ethnic", "Gothic",
+		"Darkwave", "Techno-Industrial", "Electronic", "Pop-Folk", "Eurodance", "Dream", "Southern Rock", "Comedy", "Cult", "Gangsta",
+		"Top 40", "Christian Rap", "Pop/Funk", "Jungle", "Native American", "Cabaret", "New Wave", "Psychedelic", "Rave", "Showtunes",
+		"Trailer", "Lo-Fi", "Tribal", "Acid Punk", "Acid Jazz", "Polka", "Retro", "Musical", "Rock & Roll", "Hard Rock",
+	}
+
+	local V2_NAMES = { TT2 = "TIT2", TP1 = "TPE1", TP2 = "TPE2", TAL = "TALB", TYE = "TYER", TRK = "TRCK", TCO = "TCON", PIC = "APIC", TLE = "TLEN", ULT = "USLT", SLT = "SYLT" }
+
+	local function u32be(s, i)
+		local a, b, c, d = s:byte(i, i + 3)
+		return ((a * 256 + b) * 256 + c) * 256 + d
+	end
+
+	local function u32le(s, i)
+		local a, b, c, d = s:byte(i, i + 3)
+		return ((d * 256 + c) * 256 + b) * 256 + a
+	end
+
+	local function u24be(s, i)
+		local a, b, c = s:byte(i, i + 2)
+		return (a * 256 + b) * 256 + c
+	end
+
+	local function syncsafe(s, i)
+		local a, b, c, d = s:byte(i, i + 3)
+		return ((a * 128 + b) * 128 + c) * 128 + d
+	end
+
+	local function bitAt(value, bit)
+		return math.floor(value / 2 ^ bit) % 2 == 1
+	end
+
+	local function latin1ToUtf8(s)
+		return (s:gsub("[\128-\255]", function(ch)
+			return utf8.char(ch:byte())
+		end))
+	end
+
+	local function utf16ToUtf8(s, bigEndian)
+		local i = 1
+		if s:sub(1, 2) == "\255\254" then
+			bigEndian = false
+			i = 3
+		elseif s:sub(1, 2) == "\254\255" then
+			bigEndian = true
+			i = 3
+		end
+		local out = {}
+		while i + 1 <= #s do
+			local a, b = s:byte(i, i + 1)
+			local unit = bigEndian and (a * 256 + b) or (b * 256 + a)
+			i = i + 2
+			if unit >= 0xD800 and unit < 0xDC00 and i + 1 <= #s then
+				local c, d = s:byte(i, i + 1)
+				local low = bigEndian and (c * 256 + d) or (d * 256 + c)
+				if low >= 0xDC00 and low < 0xE000 then
+					unit = 0x10000 + (unit - 0xD800) * 1024 + (low - 0xDC00)
+					i = i + 2
+				end
+			end
+			if unit >= 0xD800 and unit < 0xE000 then
+				out[#out + 1] = "?"
+			else
+				out[#out + 1] = utf8.char(unit)
+			end
+		end
+		return table.concat(out)
+	end
+
+	local function decodeText(encoding, data)
+		local text
+		if encoding == 1 then
+			text = utf16ToUtf8(data, false)
+		elseif encoding == 2 then
+			text = utf16ToUtf8(data, true)
+		elseif encoding == 3 and utf8.len(data) then
+			text = data
+		else
+			text = latin1ToUtf8(data)
+		end
+		local parts = {}
+		for piece in text:gmatch("[^%z]+") do
+			piece = piece:match("^%s*(.-)%s*$")
+			if piece ~= "" then
+				parts[#parts + 1] = piece
+			end
+		end
+		return table.concat(parts, ", ")
+	end
+
+	local function terminatorEnd(data, start, encoding)
+		if encoding == 1 or encoding == 2 then
+			local i = start
+			while i + 1 <= #data do
+				if data:byte(i) == 0 and data:byte(i + 1) == 0 and (i - start) % 2 == 0 then
+					return i + 2
+				end
+				i = i + 1
+			end
+			return #data + 1
+		end
+		local z = data:find("\0", start, true)
+		return z and (z + 1) or (#data + 1)
+	end
+
+	local LYRICS_MAX = 100000
+
+	local function lyricsDecode(encoding, data)
+		local text
+		if encoding == 1 then
+			text = utf16ToUtf8(data, false)
+		elseif encoding == 2 then
+			text = utf16ToUtf8(data, true)
+		elseif (encoding == 3 or encoding == 0) and utf8.len(data) then
+			text = data
+		else
+			text = latin1ToUtf8(data)
+		end
+		return (text:gsub("%z", ""))
+	end
+
+	local function lyricsText(payload)
+		if #payload < 5 then
+			return nil
+		end
+		local encoding = payload:byte(1)
+		local pos = terminatorEnd(payload, 5, encoding)
+		local text = lyricsDecode(encoding, payload:sub(pos, pos + LYRICS_MAX - 1))
+		if text:match("^%s*$") then
+			return nil
+		end
+		return text
+	end
+
+	local function lrcStamp(ms)
+		local total = math.floor(ms / 10 + 0.5)
+		return string.format("%02d:%02d.%02d", math.floor(total / 6000), math.floor(total / 100) % 60, total % 100)
+	end
+
+	local function syncedLyricsText(payload)
+		if #payload < 8 or payload:byte(5) ~= 2 then
+			return nil
+		end
+		local encoding = payload:byte(1)
+		local pos = terminatorEnd(payload, 7, encoding)
+		local wide = encoding == 1 or encoding == 2
+		local rows, current = {}, nil
+		local guard = 0
+		while pos <= #payload and guard < 20000 do
+			guard = guard + 1
+			local stop = terminatorEnd(payload, pos, encoding)
+			local rawEnd = stop - (wide and 2 or 1)
+			local raw = payload:sub(pos, rawEnd - 1)
+			if stop + 3 > #payload then
+				break
+			end
+			local ms = u32be(payload, stop)
+			pos = stop + 4
+			local text = lyricsDecode(encoding, raw)
+			local lead = text:match("^[\r\n]+") ~= nil
+			local trail = text:match("[\r\n]+$") ~= nil
+			text = text:gsub("[\r\n]+", "")
+			if lead or not current then
+				current = { start = ms, parts = {} }
+				rows[#rows + 1] = current
+			end
+			if text ~= "" then
+				current.parts[#current.parts + 1] = { ms = ms, text = text }
+			end
+			if trail then
+				current = nil
+			end
+		end
+		local out = {}
+		for _, row in ipairs(rows) do
+			if #row.parts == 1 then
+				out[#out + 1] = "[" .. lrcStamp(row.parts[1].ms) .. "]" .. row.parts[1].text
+			elseif #row.parts > 1 then
+				local pieces = { "[" .. lrcStamp(row.parts[1].ms) .. "]" }
+				for _, part in ipairs(row.parts) do
+					pieces[#pieces + 1] = "<" .. lrcStamp(part.ms) .. ">" .. part.text
+				end
+				out[#out + 1] = table.concat(pieces)
+			end
+		end
+		if #out == 0 then
+			return nil
+		end
+		return table.concat(out, "\n")
+	end
+
+	local function genreName(text)
+		local n = tonumber(text:match("^%(?(%d+)%)?$"))
+		if n and GENRES[n] then
+			return GENRES[n]
+		end
+		local rest = text:match("^%(%d+%)(.+)$")
+		return rest or text
+	end
+
+	local function pictureFromApic(payload, v22)
+		local encoding = payload:byte(1) or 0
+		local pos = 2
+		local mime
+		if v22 then
+			mime = (payload:sub(pos, pos + 2) == "PNG") and "image/png" or "image/jpeg"
+			pos = pos + 3
+		else
+			local z = payload:find("\0", pos, true)
+			if not z then
+				return nil
+			end
+			mime = payload:sub(pos, z - 1):lower()
+			pos = z + 1
+		end
+		local kind = payload:byte(pos) or 0
+		pos = pos + 1
+		pos = terminatorEnd(payload, pos, encoding)
+		local data = payload:sub(pos)
+		if #data < 16 then
+			return nil
+		end
+		return { data = data, mime = mime, kind = kind }
+	end
+
+	local function parseId3v2(data)
+		if data:sub(1, 3) ~= "ID3" then
+			return nil
+		end
+		local major = data:byte(4)
+		local flags = data:byte(6)
+		if major < 2 or major > 4 then
+			return nil
+		end
+		local size = syncsafe(data, 7)
+		local body = data:sub(11, 10 + size)
+		if bitAt(flags, 7) then
+			body = body:gsub("\255%z", "\255")
+		end
+		local pos = 1
+		if bitAt(flags, 6) and major >= 3 and #body >= 4 then
+			local extSize = major == 4 and syncsafe(body, 1) or (u32be(body, 1) + 4)
+			pos = 1 + extSize
+		end
+		local tag = { version = "ID3v2." .. major, text = {}, pictures = {} }
+		local idLen = major == 2 and 3 or 4
+		local headLen = major == 2 and 6 or 10
+		while pos + headLen - 1 <= #body do
+			local id = body:sub(pos, pos + idLen - 1)
+			if id:byte(1) == 0 then
+				break
+			end
+			local frameSize
+			if major == 2 then
+				frameSize = u24be(body, pos + 3)
+			elseif major == 3 then
+				frameSize = u32be(body, pos + 4)
+			else
+				frameSize = syncsafe(body, pos + 4)
+			end
+			local payload = body:sub(pos + headLen, pos + headLen + frameSize - 1)
+			pos = pos + headLen + frameSize
+			if major == 2 then
+				id = V2_NAMES[id] or id
+			end
+			if id == "USLT" then
+				if not tag.lyrics then
+					tag.lyrics = lyricsText(payload)
+				end
+			elseif id == "SYLT" then
+				if not tag.syncLyrics then
+					tag.syncLyrics = syncedLyricsText(payload)
+				end
+			elseif id == "APIC" then
+				local pic = pictureFromApic(payload, major == 2)
+				if pic then
+					tag.pictures[#tag.pictures + 1] = pic
+				end
+			elseif id:sub(1, 1) == "T" and id ~= "TXXX" and #payload >= 2 then
+				if not tag.text[id] then
+					tag.text[id] = decodeText(payload:byte(1), payload:sub(2))
+				end
+			end
+		end
+		tag.audioStart = 10 + size + 1
+		return tag
+	end
+
+	local function parseId3v1(data)
+		if #data < 128 or data:sub(-128, -126) ~= "TAG" then
+			return nil
+		end
+		local function field(a, b)
+			local s = data:sub(#data - 128 + a, #data - 128 + b)
+			s = s:gsub("%z.*$", "")
+			return latin1ToUtf8(s:match("^%s*(.-)%s*$"))
+		end
+		local tag = { title = field(4, 33), artist = field(34, 63), album = field(64, 93), year = field(94, 97) }
+		local genre = data:byte(#data)
+		if data:byte(#data - 2) == 0 and (data:byte(#data - 1) or 0) ~= 0 then
+			tag.track = tostring(data:byte(#data - 1))
+		end
+		if genre and GENRES[genre] then
+			tag.genre = GENRES[genre]
+		end
+		return tag
+	end
+
+	local MPEG_BITRATES = {
+		[1] = {
+			[1] = { 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448 },
+			[2] = { 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384 },
+			[3] = { 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320 },
+		},
+		[2] = {
+			[1] = { 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256 },
+			[2] = { 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160 },
+			[3] = { 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160 },
+		},
+	}
+	local MPEG_RATES = { [1] = { 44100, 48000, 32000 }, [2] = { 22050, 24000, 16000 }, [25] = { 11025, 12000, 8000 } }
+
+	local function frameAt(data, pos)
+		local b1, b2, b3, b4 = data:byte(pos, pos + 3)
+		if not b4 or b1 ~= 255 or b2 < 224 then
+			return nil
+		end
+		local versionBits = math.floor(b2 / 8) % 4
+		local layerBits = math.floor(b2 / 2) % 4
+		local bitrateIndex = math.floor(b3 / 16)
+		local rateIndex = math.floor(b3 / 4) % 4
+		if versionBits == 1 or layerBits == 0 or bitrateIndex == 0 or bitrateIndex == 15 or rateIndex == 3 then
+			return nil
+		end
+		local version = versionBits == 3 and 1 or (versionBits == 2 and 2 or 25)
+		local layer = 4 - layerBits
+		local table1 = MPEG_BITRATES[version == 1 and 1 or 2][layer]
+		local bitrate = table1[bitrateIndex]
+		local rate = MPEG_RATES[version][rateIndex + 1]
+		local padding = math.floor(b3 / 2) % 2
+		local length
+		if layer == 1 then
+			length = (math.floor(12000 * bitrate / rate) + padding) * 4
+		elseif layer == 3 and version ~= 1 then
+			length = math.floor(72000 * bitrate / rate) + padding
+		else
+			length = math.floor(144000 * bitrate / rate) + padding
+		end
+		local samples = layer == 1 and 384 or ((layer == 3 and version ~= 1) and 576 or 1152)
+		return {
+			version = version,
+			layer = layer,
+			bitrate = bitrate,
+			rate = rate,
+			length = length,
+			samples = samples,
+			mono = math.floor(b4 / 64) == 3,
+			crc = b2 % 2 == 0,
+			joint = math.floor(b4 / 64) == 1,
+		}
+	end
+
+	local function parseMpeg(data, startPos, endPos)
+		local limit = math.min(#data, startPos + 65536)
+		local pos = startPos
+		while pos < limit do
+			local at = data:find("\255", pos, true)
+			if not at or at >= limit then
+				return nil
+			end
+			local f = frameAt(data, at)
+			if f and f.length > 0 and (at + f.length > #data or data:byte(at + f.length) == 255) then
+				local info = { version = f.version, layer = f.layer, rate = f.rate, mono = f.mono, bitrate = f.bitrate, vbr = false, mode = f.mono and "Mono" or (f.joint and "Joint stereo" or "Stereo") }
+				local side
+				if f.version == 1 then
+					side = f.mono and 17 or 32
+				else
+					side = f.mono and 9 or 17
+				end
+				local xingAt = at + 4 + (f.crc and 2 or 0) + side
+				local mark = data:sub(xingAt, xingAt + 3)
+				if mark == "Xing" or mark == "Info" then
+					local flags = data:byte(xingAt + 7)
+					if flags and bitAt(flags, 0) then
+						local frames = u32be(data, xingAt + 8)
+						if frames > 0 then
+							local seconds = frames * f.samples / f.rate
+							local bytes = (endPos or #data) - at + 1
+							if seconds > 0 then
+								info.duration = seconds
+								info.vbr = mark == "Xing"
+								if info.vbr then
+									info.bitrate = math.floor(bytes * 8 / seconds / 1000 + 0.5)
+								end
+							end
+						end
+					end
+				end
+				if not info.duration then
+					info.duration = ((endPos or #data) - at + 1) * 8 / (f.bitrate * 1000)
+				end
+				return info
+			end
+			pos = at + 1
+		end
+		return nil
+	end
+
+	local function parseVorbisComments(data, pos)
+		local out = {}
+		local vendorLen = u32le(data, pos)
+		pos = pos + 4 + vendorLen
+		local count = u32le(data, pos)
+		pos = pos + 4
+		for _ = 1, math.min(count, 500) do
+			if pos + 3 > #data then
+				break
+			end
+			local len = u32le(data, pos)
+			pos = pos + 4
+			local entry = data:sub(pos, pos + len - 1)
+			pos = pos + len
+			local key, value = entry:match("^([^=]+)=(.*)$")
+			if key then
+				key = key:upper()
+				if out[key] == nil then
+					out[key] = value
+				elseif key == "ARTIST" or key == "GENRE" then
+					out[key] = out[key] .. ", " .. value
+				end
+			end
+		end
+		return out
+	end
+
+	local B64 = {}
+	do
+		local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+		for i = 1, 64 do
+			B64[alphabet:byte(i)] = i - 1
+		end
+	end
+
+	local function base64Decode(text)
+		text = text:gsub("[^%w%+/]", "")
+		local out = {}
+		local full = #text - (#text % 4)
+		for i = 1, full, 4 do
+			local a, b, c, d = text:byte(i, i + 3)
+			local n = ((B64[a] * 64 + B64[b]) * 64 + B64[c]) * 64 + B64[d]
+			out[#out + 1] = string.char(math.floor(n / 65536), math.floor(n / 256) % 256, n % 256)
+		end
+		local rest = #text - full
+		if rest == 2 then
+			local a, b = text:byte(full + 1, full + 2)
+			local n = B64[a] * 64 + B64[b]
+			out[#out + 1] = string.char(math.floor(n / 16))
+		elseif rest == 3 then
+			local a, b, c = text:byte(full + 1, full + 3)
+			local n = (B64[a] * 64 + B64[b]) * 64 + B64[c]
+			out[#out + 1] = string.char(math.floor(n / 1024), math.floor(n / 4) % 256)
+		end
+		return table.concat(out)
+	end
+
+	local function pictureFromFlac(block)
+		local kind = u32be(block, 1)
+		local mimeLen = u32be(block, 5)
+		local mime = block:sub(9, 8 + mimeLen):lower()
+		local pos = 9 + mimeLen
+		local descLen = u32be(block, pos)
+		pos = pos + 4 + descLen + 16
+		local dataLen = u32be(block, pos)
+		local data = block:sub(pos + 4, pos + 3 + dataLen)
+		if #data < 16 then
+			return nil
+		end
+		return { data = data, mime = mime, kind = kind }
+	end
+
+	local function oggPackets(data, wanted)
+		local packets, current = {}, {}
+		local pos = 1
+		while pos + 26 <= #data and #packets < wanted do
+			if data:sub(pos, pos + 3) ~= "OggS" then
+				break
+			end
+			local segments = data:byte(pos + 26)
+			local lacing = { data:byte(pos + 27, pos + 26 + segments) }
+			local offset = pos + 27 + segments
+			for _, len in ipairs(lacing) do
+				current[#current + 1] = data:sub(offset, offset + len - 1)
+				offset = offset + len
+				if len < 255 then
+					packets[#packets + 1] = table.concat(current)
+					current = {}
+					if #packets >= wanted then
+						break
+					end
+				end
+			end
+			pos = offset
+		end
+		return packets
+	end
+
+	local function oggLastGranule(data)
+		local last
+		local init = math.max(1, #data - 70000)
+		while true do
+			local at = data:find("OggS", init, true)
+			if not at then
+				break
+			end
+			last = at
+			init = at + 1
+		end
+		if not last or last + 13 > #data then
+			return nil
+		end
+		return u32le(data, last + 6) + u32le(data, last + 10) * 4294967296
+	end
+
+	local function parseOgg(data)
+		local packets = oggPackets(data, 2)
+		local head, comments = packets[1], packets[2]
+		if not head or not comments then
+			return nil
+		end
+		local meta = { format = "OGG" }
+		local tags
+		if head:sub(1, 7) == "\1vorbis" then
+			meta.codec = "Vorbis"
+			meta.channels = head:byte(12)
+			meta.rate = u32le(head, 13)
+			local nominal = u32le(head, 21)
+			if nominal > 0 and nominal < 4000000000 then
+				meta.bitrate = math.floor(nominal / 1000 + 0.5)
+			end
+			if comments:sub(1, 7) == "\3vorbis" then
+				tags = parseVorbisComments(comments, 8)
+			end
+		elseif head:sub(1, 8) == "OpusHead" then
+			meta.codec = "Opus"
+			meta.channels = head:byte(10)
+			meta.rate = u32le(head, 13)
+			if comments:sub(1, 8) == "OpusTags" then
+				tags = parseVorbisComments(comments, 9)
+			end
+		else
+			return nil
+		end
+		local granule = oggLastGranule(data)
+		if granule and meta.rate and meta.rate > 0 then
+			local rate = meta.codec == "Opus" and 48000 or meta.rate
+			local seconds = granule / rate
+			if seconds > 0 then
+				meta.duration = seconds
+				meta.bitrate = math.floor(#data * 8 / seconds / 1000 + 0.5)
+				meta.vbr = true
+			end
+		end
+		if tags then
+			meta.title = tags.TITLE
+			meta.artist = tags.ARTIST
+			meta.albumArtist = tags.ALBUMARTIST
+			meta.album = tags.ALBUM
+			meta.year = tags.DATE or tags.YEAR
+			meta.track = tags.TRACKNUMBER
+			meta.genre = tags.GENRE
+			meta.lyrics = tags.SYNCEDLYRICS or tags.LYRICS or tags.UNSYNCEDLYRICS
+			meta.tags = "Vorbis comments"
+			if tags.METADATA_BLOCK_PICTURE then
+				local ok, pic = pcall(function()
+					return pictureFromFlac(base64Decode(tags.METADATA_BLOCK_PICTURE))
+				end)
+				if ok then
+					meta.picture = pic
+				end
+			end
+		end
+		return meta
+	end
+
+	local function clean(value)
+		if type(value) ~= "string" then
+			return nil
+		end
+		value = value:gsub("%c", " "):match("^%s*(.-)%s*$")
+		if value == "" then
+			return nil
+		end
+		if not utf8.len(value) then
+			value = latin1ToUtf8(value)
+		end
+		return value
+	end
+
+	local function parseMp3(data)
+		local meta = { format = "MP3" }
+		local id3Two = parseId3v2(data)
+		local v1 = parseId3v1(data)
+		local tagNames = {}
+		local audioStart = 1
+		if id3Two then
+			tagNames[#tagNames + 1] = id3Two.version
+			audioStart = id3Two.audioStart
+			local t = id3Two.text
+			meta.title = t.TIT2
+			meta.artist = t.TPE1
+			meta.albumArtist = t.TPE2
+			meta.album = t.TALB
+			meta.year = t.TDRC or t.TYER
+			meta.track = t.TRCK
+			meta.genre = t.TCON and genreName(t.TCON) or nil
+			meta.lyrics = id3Two.syncLyrics or id3Two.lyrics
+			local best
+			for _, pic in ipairs(id3Two.pictures) do
+				if not best or pic.kind == 3 then
+					best = pic
+				end
+			end
+			meta.picture = best
+		end
+		local audioEnd = #data
+		if v1 then
+			tagNames[#tagNames + 1] = "ID3v1"
+			audioEnd = #data - 128
+			meta.title = meta.title or v1.title
+			meta.artist = meta.artist or v1.artist
+			meta.album = meta.album or v1.album
+			meta.year = meta.year or v1.year
+			meta.track = meta.track or v1.track
+			meta.genre = meta.genre or v1.genre
+		end
+		if #tagNames > 0 then
+			meta.tags = table.concat(tagNames, " + ")
+		end
+		local info = parseMpeg(data, audioStart, audioEnd)
+		if info then
+			meta.mpeg = "MPEG " .. (info.version == 25 and "2.5" or info.version) .. " Layer " .. string.rep("I", info.layer)
+			meta.bitrate = info.bitrate
+			meta.vbr = info.vbr
+			meta.rate = info.rate
+			meta.channels = info.mono and 1 or 2
+			meta.mode = info.mode
+			meta.duration = info.duration
+		end
+		return meta
+	end
+
+	local function pictureExtension(pic)
+		local head = pic.data:sub(1, 4)
+		if head:sub(1, 3) == "\255\216\255" then
+			return "jpg"
+		elseif head == "\137PNG" then
+			return "png"
+		end
+		return nil
+	end
+
+	function M.parse(data, ext)
+		local ok, meta = pcall(function()
+			if data:sub(1, 4) == "OggS" then
+				return parseOgg(data)
+			end
+			return parseMp3(data)
+		end)
+		if not ok or type(meta) ~= "table" then
+			return nil
+		end
+		meta.title = clean(meta.title)
+		meta.artist = clean(meta.artist)
+		meta.albumArtist = clean(meta.albumArtist)
+		meta.album = clean(meta.album)
+		meta.year = clean(meta.year)
+		if meta.year then
+			meta.year = meta.year:match("^(%d%d%d%d)") or meta.year
+		end
+		meta.track = clean(meta.track)
+		meta.genre = clean(meta.genre)
+		if type(meta.lyrics) ~= "string" or #meta.lyrics > LYRICS_MAX or meta.lyrics:match("^%s*$") then
+			meta.lyrics = nil
+		end
+		meta.size = #data
+		if meta.picture then
+			meta.pictureExt = pictureExtension(meta.picture)
+			if not meta.pictureExt then
+				meta.picture = nil
+			end
+		end
+		return meta
+	end
+
+	M.pictureExtension = pictureExtension
+
+	local ART_DIR = ROOT .. "/Music Art"
+	local cache, pending, waiters = {}, {}, {}
+	local inGet = false
+
+	local function hashText(s)
+		local h = 5381
+		for i = 1, #s do
+			h = (h * 33 + s:byte(i)) % 4294967296
+		end
+		return string.format("%08x", h)
+	end
+
+	local function extract(track)
+		local data = hasFS and fsRead(track.path) or nil
+		if not data or #data == 0 then
+			return false
+		end
+		local ok, meta = pcall(M.parse, data, track.ext)
+		if not ok or type(meta) ~= "table" then
+			return false
+		end
+		local pic = meta.picture
+		meta.picture = nil
+		if pic and type(pic.data) == "string" and #pic.data > 0 then
+			meta.hasCover = true
+			meta.coverMime = pic.mime
+			meta.coverBytes = #pic.data
+			if settings.musicCover then
+				meta.coverTried = true
+				if getcustomasset and meta.pictureExt then
+					fsEnsure(ART_DIR)
+					local file = ART_DIR .. "/" .. hashText(track.path) .. string.format("%x", #data) .. "." .. meta.pictureExt
+					if fsIsFile(file) or fsWrite(file, pic.data) then
+						local made, asset = pcall(getcustomasset, file)
+						if made and asset then
+							meta.coverAsset = asset
+						end
+					end
+				end
+			end
+		end
+		return meta
+	end
+
+	local function finish(path, result)
+		pending[path] = nil
+		cache[path] = result
+		local list = waiters[path]
+		waiters[path] = nil
+		if list then
+			for _, cb in ipairs(list) do
+				pcall(cb, result or false)
+			end
+		end
+		M.decorateRow(path)
+		if not inGet and musicCurrent and musicCurrent.path == path then
+			refreshNowPlaying()
+		end
+	end
+
+	local function start(track, cb)
+		local path = track.path
+		if cb then
+			waiters[path] = waiters[path] or {}
+			table.insert(waiters[path], cb)
+		end
+		if pending[path] then
+			return
+		end
+		pending[path] = true
+		task.spawn(function()
+			local ok, result = pcall(extract, track)
+			finish(path, ok and result or false)
+		end)
+	end
+
+	function M.get(track)
+		if not track or not settings.musicTags then
+			return nil
+		end
+		local meta = cache[track.path]
+		if meta == nil then
+			inGet = true
+			start(track)
+			inGet = false
+			return cache[track.path] or nil
+		end
+		if meta and settings.musicCover and meta.hasCover and not meta.coverTried and not pending[track.path] then
+			inGet = true
+			start(track)
+			inGet = false
+			return cache[track.path] or meta
+		end
+		return meta or nil
+	end
+
+	function M.request(track, cb)
+		local meta = cache[track.path]
+		if meta ~= nil then
+			cb(meta)
+			return
+		end
+		start(track, cb)
+	end
+
+	function M.clearCovers()
+		if hasFS and fsIsDir(ART_DIR) then
+			fsDeleteTree(ART_DIR)
+		end
+		for _, meta in pairs(cache) do
+			if meta then
+				meta.coverAsset = nil
+				meta.coverTried = nil
+			end
+		end
+	end
+
+	function M.title(track, meta)
+		return meta and meta.title or track.name
+	end
+
+	function M.sub(track, meta)
+		if meta and (meta.artist or meta.album) then
+			if meta.artist and meta.album then
+				return meta.artist .. " - " .. meta.album
+			end
+			return meta.artist or meta.album
+		end
+		return track.folder ~= "" and track.folder or "Library"
+	end
+
+	function M.line(track, meta, length)
+		local parts = { meta and meta.codec and (meta.format .. " " .. meta.codec) or (meta and meta.format) or track.ext:upper() }
+		parts[#parts + 1] = fmtTime(length)
+		if meta and meta.bitrate and meta.bitrate > 0 then
+			parts[#parts + 1] = (meta.vbr and "~" or "") .. meta.bitrate .. " kbps"
+		end
+		if meta and meta.rate and meta.rate > 0 then
+			parts[#parts + 1] = string.format("%g kHz", math.floor(meta.rate / 100 + 0.5) / 10)
+		end
+		local year = meta and meta.year and tostring(meta.year):match("%d%d%d%d")
+		if year then
+			parts[#parts + 1] = year
+		end
+		return table.concat(parts, " | ")
+	end
+
+	function M.decorateRow(path)
+		local entry = musicRows[path]
+		if not entry or not entry.name then
+			return
+		end
+		local track = entry.track
+		local meta = settings.musicTags and cache[path] or nil
+		entry.name.Text = meta and meta.title or track.name
+		entry.sub.Text = ((meta and meta.artist) or (track.folder ~= "" and track.folder or "Library")) .. " | " .. track.ext:upper()
+	end
+
+	function M.refreshRows()
+		for path in pairs(musicRows) do
+			M.decorateRow(path)
+		end
+	end
+
+	function M.matches(track, query)
+		local meta = settings.musicTags and cache[track.path] or nil
+		if not meta then
+			return false
+		end
+		for _, field in ipairs({ meta.title, meta.artist, meta.album, meta.albumArtist }) do
+			if field and field:lower():find(query, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local ROW_STEP = 50
+	local queue, working = {}, false
+
+	function M.scan()
+		if not settings.musicTags then
+			return
+		end
+		local listH = UI.musicList.AbsoluteSize.Y / (UI.scaleValue or 1)
+		if type(listH) ~= "number" or listH < 40 then
+			listH = 420
+		end
+		local top = UI.musicList.CanvasPosition.Y
+		if type(top) ~= "number" then
+			top = 0
+		end
+		local first = math.max(1, math.floor(top / ROW_STEP) - 2)
+		local last = math.min(#musicVisible, math.ceil((top + listH) / ROW_STEP) + 4)
+		local fresh = {}
+		for i = first, last do
+			local track = musicVisible[i]
+			if track and musicRows[track.path] and cache[track.path] == nil and not pending[track.path] then
+				fresh[#fresh + 1] = track
+			end
+		end
+		queue = fresh
+		if working or #queue == 0 then
+			return
+		end
+		working = true
+		task.spawn(function()
+			while running do
+				local track = table.remove(queue, 1)
+				if not track then
+					break
+				end
+				if cache[track.path] == nil and not pending[track.path] and settings.musicTags then
+					local finished = false
+					start(track, function()
+						finished = true
+					end)
+					local waited = 0
+					while not finished and waited < 5 and running do
+						task.wait(0.03)
+						waited = waited + 0.03
+					end
+					task.wait(0.03)
+				end
+			end
+			working = false
+		end)
+	end
+
+	local scanToken = 0
+	function M.scanSoon()
+		scanToken = scanToken + 1
+		local mine = scanToken
+		task.delay(0.2, function()
+			if running and mine == scanToken then
+				M.scan()
+			end
+		end)
+	end
+
+	UI.musicList:GetPropertyChangedSignal("CanvasPosition"):Connect(M.scanSoon)
+	UI.musicList:GetPropertyChangedSignal("AbsoluteSize"):Connect(M.scanSoon)
+
+	UI.musicCover = new("ImageLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Image = "",
+		ScaleType = Enum.ScaleType.Crop,
+		Visible = false,
+		ZIndex = 4,
+	}, UI.musicArt)
+	corner(UI.musicCover, 16)
+	UI.musicMeta.TextTruncate = Enum.TextTruncate.AtEnd
+
+	function M.applyCover(meta)
+		local asset = meta and settings.musicCover and meta.coverAsset or nil
+		if asset then
+			if UI.musicCover.Image ~= asset then
+				UI.musicCover.Image = asset
+			end
+			UI.musicCover.Visible = true
+		else
+			UI.musicCover.Visible = false
+		end
+		UI.musicArtIcon.Visible = not UI.musicCover.Visible
+	end
+
+	local function sizeText(bytes)
+		if bytes >= 1048576 then
+			return string.format("%.1f MB", bytes / 1048576)
+		end
+		return string.format("%d KB", math.max(1, math.floor(bytes / 1024 + 0.5)))
+	end
+
+	local function escapeRich(s)
+		return (tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"):gsub("'", "&apos;"))
+	end
+
+	local function hexColor(c)
+		return string.format("#%02x%02x%02x", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+	end
+
+	function M.infoRows(track, meta)
+		local rows = {}
+		local function add(label, value)
+			if value ~= nil and tostring(value) ~= "" then
+				rows[#rows + 1] = { label, tostring(value) }
+			end
+		end
+		add("Title", meta.title)
+		add("Artist", meta.artist)
+		add("Album Artist", meta.albumArtist)
+		add("Album", meta.album)
+		add("Year", meta.year)
+		add("Track", meta.track)
+		add("Genre", meta.genre)
+		local format = meta.format
+		local detail = meta.mpeg or meta.codec
+		if format and detail then
+			format = format .. " (" .. detail .. ")"
+		end
+		add("Format", format)
+		if meta.bitrate and meta.bitrate > 0 then
+			add("Bitrate", (meta.vbr and "~" or "") .. meta.bitrate .. " kbps" .. (meta.vbr and " (variable)" or ""))
+		end
+		if meta.rate and meta.rate > 0 then
+			add("Sample Rate", string.format("%d Hz", meta.rate))
+		end
+		local channels = meta.mode
+		if not channels and meta.channels then
+			channels = meta.channels == 1 and "Mono" or meta.channels == 2 and "Stereo" or (meta.channels .. " channels")
+		end
+		add("Channels", channels)
+		if meta.duration and meta.duration > 0 then
+			add("Duration", fmtTime(meta.duration))
+		end
+		if meta.size then
+			add("File Size", sizeText(meta.size))
+		end
+		add("Tags", meta.tags)
+		if meta.lyrics then
+			add("Lyrics", "embedded (" .. (meta.lyrics:find("%[%d+:%d+") and "synced" or "plain") .. ")")
+		end
+		if meta.hasCover then
+			add("Cover", tostring(meta.coverMime or "image") .. ", " .. sizeText(meta.coverBytes or 0))
+		end
+		add("File", track.path)
+		return rows
+	end
+
+	function M.showInfo(track)
+		if not track then
+			return
+		end
+		M.request(track, function(meta)
+			if not meta then
+				notify("Could not read this file", "error")
+				return
+			end
+			local rows = M.infoRows(track, meta)
+			local rich, plain = {}, {}
+			local labelColor, valueColor = hexColor(C.sub), hexColor(C.text)
+			for _, row in ipairs(rows) do
+				rich[#rich + 1] = '<font color="' .. labelColor .. '">' .. escapeRich(row[1]) .. '</font>   <font color="' .. valueColor .. '">' .. escapeRich(row[2]) .. "</font>"
+				plain[#plain + 1] = row[1] .. ": " .. row[2]
+			end
+			ov.modal({
+				title = "Song Info",
+				desc = table.concat(rich, "\n"),
+				descRich = true,
+				descHeight = math.min(60 + #rows * 19, 360),
+				width = 500,
+				okText = "Copy",
+				okIcon = "two-stacked-squares",
+				cancelText = "Close",
+				onSubmit = function()
+					if setclipboard then
+						pcall(setclipboard, table.concat(plain, "\n"))
+						notify("Copied song info", "success")
+					else
+						notify("setclipboard is not supported by your executor", "warn")
+					end
+					return false
+				end,
+			})
+		end)
+	end
+
+	local infoBtn = iconBtn("", { "circle-i" }, 36, UI.musicPanel, 36, false)
+	infoBtn.Position = UDim2.new(0, 234, 0, 130)
+	infoBtn.Visible = false
+	UI.musicInfoBtn = infoBtn
+	infoBtn.MouseButton1Click:Connect(function()
+		M.showInfo(musicCurrent)
+	end)
+
+	bind("musicTags", function()
+		M.refreshRows()
+		M.scanSoon()
+		refreshNowPlaying()
+	end, true)
+	bind("musicCover", function()
+		refreshNowPlaying()
+	end, true)
+
+	UI.meta = M
+end
+
+local function musicSanitize(name)
+	name = tostring(name or ""):gsub('[\\/:*?"<>|]', "")
+	name = name:match("^%s*(.-)%s*$")
+	if name == "" then
+		name = "Downloaded song"
+	end
+	return name:sub(1, 60)
+end
+
+local musicScanToken = 0
+local scanMusic = function()
+	musicScanToken += 1
+	local mine = musicScanToken
+	local tracks = {}
+	if hasFS then
+		fsEnsure(MUSIC_DIR)
+		local function scan(dir, tag, depth)
+			for _, e in ipairs(fsList(dir)) do
+				if e.isDir then
+					if depth < 3 then
+						scan(e.path, e.name, depth + 1)
+					end
+				else
+					local ext = fsExt(e.name)
+					if ext == "mp3" or ext == "ogg" then
+						tracks[#tracks + 1] = { name = fsStripExt(e.name), path = e.path, folder = tag, ext = ext }
+					end
+				end
+			end
+		end
+		scan(MUSIC_DIR, "", 1)
+	end
+	if mine ~= musicScanToken then
+		return false
+	end
+	musicTracks = tracks
+	return true
+end
+
+local function getVisibleTracks()
+	local q = UI.musicSearch.Text:lower()
+	local out = {}
+	local recentOrder = {}
+	if musicFilter == "recent" then
+		for i, p in ipairs(settings.musicRecent) do
+			recentOrder[p] = i
+		end
+	end
+	for _, t in ipairs(musicTracks) do
+		local ok = true
+		if musicFilter == "fav" then
+			ok = musicFavSet[t.path] == true
+		elseif musicFilter == "recent" then
+			ok = recentOrder[t.path] ~= nil
+		elseif musicFilter:sub(1, 7) == "folder:" then
+			ok = t.folder == musicFilter:sub(8)
+		end
+		if ok and q ~= "" then
+			ok = t.name:lower():find(q, 1, true) ~= nil or t.folder:lower():find(q, 1, true) ~= nil or UI.meta.matches(t, q)
+		end
+		if ok then
+			out[#out + 1] = t
+		end
+	end
+	if musicFilter == "recent" then
+		table.sort(out, function(a, b)
+			return recentOrder[a.path] < recentOrder[b.path]
+		end)
+	else
+		local mode = settings.musicSort
+		table.sort(out, function(a, b)
+			if mode == 3 and a.folder ~= b.folder then
+				return a.folder:lower() < b.folder:lower()
+			end
+			if mode == 2 then
+				return a.name:lower() > b.name:lower()
+			end
+			return a.name:lower() < b.name:lower()
+		end)
+	end
+	return out
+end
+
+local function restyleMusicRows()
+	for path, r in pairs(musicRows) do
+		local cur = musicCurrent ~= nil and musicCurrent.path == path
+		local fav = musicFavSet[path] == true
+		r.row.BackgroundColor3 = cur and accent() or C.dim
+		r.row.BackgroundTransparency = cur and 0.45 or 0.4
+		r.icon.FontFace = iconFont(cur)
+		r.icon.TextColor3 = cur and C.text or C.sub
+		r.heart.FontFace = iconFont(fav)
+		r.heart.TextColor3 = fav and C.red or C.sub
+	end
+end
+
+local function styleMusicChips()
+	for _, chip in ipairs(musicChips) do
+		local sel = chip.key == musicFilter or (chip.key == "folders" and musicFilter:sub(1, 7) == "folder:")
+		chip.btn.BackgroundColor3 = sel and accent() or C.card
+		chip.btn.BackgroundTransparency = sel and 0.2 or 0.4
+		chip.icon.FontFace = iconFont(sel)
+	end
+end
+
+local function rebuildMusicChips()
+	for _, c in ipairs(UI.musicChips:GetChildren()) do
+		if c:IsA("TextButton") then
+			c:Destroy()
+		end
+	end
+	musicChips = {}
+	local counts, folders = {}, {}
+	for _, t in ipairs(musicTracks) do
+		if t.folder ~= "" then
+			if not counts[t.folder] then
+				folders[#folders + 1] = t.folder
+				counts[t.folder] = 0
+			end
+			counts[t.folder] += 1
+		end
+	end
+	table.sort(folders, function(a, b)
+		return a:lower() < b:lower()
+	end)
+	if musicFilter:sub(1, 7) == "folder:" and not counts[musicFilter:sub(8)] then
+		musicFilter = "all"
+	end
+	local defs = {
+		{ key = "all", label = "All", icon = "grid" },
+		{ key = "fav", label = "Favorites", icon = "heart" },
+		{ key = "recent", label = "Recent", icon = "clock" },
+	}
+	if #folders > 0 then
+		local current = musicFilter:sub(1, 7) == "folder:" and musicFilter:sub(8) or "Folders"
+		defs[#defs + 1] = { key = "folders", label = current, icon = "folder", menu = true }
+	end
+	for i, d in ipairs(defs) do
+		local btn = new("TextButton", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 0, 34),
+			BackgroundColor3 = C.card,
+			BackgroundTransparency = 0.4,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = i,
+		}, UI.musicChips)
+		corner(btn, 17)
+		local holder = new("Frame", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.new(0, 0, 1, 0), BackgroundTransparency = 1 }, btn)
+		new("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, holder)
+		padding(holder, 0, 14, 0, 14)
+		local ic = newIcon(holder, { d.icon }, false, 16, C.text)
+		ic.LayoutOrder = 1
+		new("TextLabel", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = d.label,
+			TextColor3 = C.text,
+			TextSize = 14,
+			FontFace = sans(),
+			LayoutOrder = 2,
+		}, holder)
+		if d.menu then
+			local chev = newIcon(holder, { "chevron-small-down" }, false, 16, C.sub)
+			chev.LayoutOrder = 3
+		end
+		btn.MouseButton1Click:Connect(function()
+			if d.menu then
+				local opts = { { label = "All songs", value = "all", icon = "grid" } }
+				for _, f in ipairs(folders) do
+					opts[#opts + 1] = { label = f, value = "folder:" .. f, icon = "folder", desc = counts[f] .. " songs" }
+				end
+				ov.dropdown(btn, opts, musicFilter, function(value)
+					musicFilter = value
+					rebuildMusicChips()
+					refreshMusicList()
+				end, { minWidth = 240 })
+				return
+			end
+			musicFilter = d.key
+			styleMusicChips()
+			refreshMusicList()
+		end)
+		musicChips[i] = { btn = btn, icon = ic, key = d.key }
+	end
+	styleMusicChips()
+end
+
+local function toggleFavorite(track)
+	if not track then
+		return
+	end
+	local list = settings.musicFavorites
+	if musicFavSet[track.path] then
+		for i, p in ipairs(list) do
+			if p == track.path then
+				table.remove(list, i)
+				break
+			end
+		end
+	else
+		table.insert(list, track.path)
+	end
+	setSetting("musicFavorites", list)
+	rebuildFavSet()
+	if musicFilter == "fav" then
+		refreshMusicList()
+	else
+		restyleMusicRows()
+	end
+	refreshNowPlaying()
+end
+
+local function recordRecent(track)
+	local list = settings.musicRecent
+	for i = #list, 1, -1 do
+		if list[i] == track.path then
+			table.remove(list, i)
+		end
+	end
+	table.insert(list, 1, track.path)
+	while #list > 25 do
+		table.remove(list)
+	end
+	setSetting("musicRecent", list)
+	setSetting("musicLast", track.path)
+end
+
+local function makeMusicRow(track)
+	local row = new("TextButton", {
+		Size = UDim2.new(1, 0, 0, 46),
+		BackgroundColor3 = C.dim,
+		BackgroundTransparency = 0.4,
+		AutoButtonColor = false,
+		Text = "",
+	}, UI.musicList)
+	corner(row, 8)
+	local ic = newIcon(row, { "music-note" }, false, 20, C.sub)
+	ic.Position = UDim2.new(0, 12, 0.5, -12)
+	local nameLbl = new("TextLabel", {
+		Position = UDim2.new(0, 46, 0, 6),
+		Size = UDim2.new(1, -96, 0, 20),
+		BackgroundTransparency = 1,
+		Text = track.name,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local subLbl = new("TextLabel", {
+		Position = UDim2.new(0, 46, 0, 26),
+		Size = UDim2.new(1, -96, 0, 14),
+		BackgroundTransparency = 1,
+		Text = (track.folder ~= "" and track.folder or "Library") .. " | " .. track.ext:upper(),
+		TextColor3 = C.sub,
+		TextSize = 11,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local heartBtn = new("TextButton", { Position = UDim2.new(1, -40, 0.5, -16), Size = UDim2.fromOffset(32, 32), BackgroundTransparency = 1, Text = "" }, row)
+	local heart = newIcon(heartBtn, { "heart" }, false, 18, C.sub)
+	heart.Position = UDim2.new(0.5, -11, 0.5, -11)
+	heartBtn.MouseButton1Click:Connect(function()
+		toggleFavorite(track)
+	end)
+	row.MouseButton1Click:Connect(function()
+		musicQueue = musicVisible
+		playTrack(track)
+	end)
+	musicRows[track.path] = { row = row, icon = ic, heart = heart, name = nameLbl, sub = subLbl, track = track }
+	UI.meta.decorateRow(track.path)
+end
+
+refreshMusicList = function()
+	for _, r in pairs(musicRows) do
+		r.row:Destroy()
+	end
+	musicRows = {}
+	musicVisible = getVisibleTracks()
+	for i, t in ipairs(musicVisible) do
+		if i > 500 then
+			break
+		end
+		makeMusicRow(t)
+	end
+	for i, t in ipairs(musicVisible) do
+		if musicRows[t.path] then
+			musicRows[t.path].row.LayoutOrder = i
+		end
+	end
+	if not hasFS then
+		UI.musicEmpty.Text = "Your executor does not support file system functions"
+	elseif #musicTracks == 0 then
+		UI.musicEmpty.Text = "No songs yet. Add .mp3 or .ogg files to workspace/" .. MUSIC_DIR .. " or use the download button."
+	elseif #musicVisible == 0 then
+		UI.musicEmpty.Text = musicFilter == "fav" and "No favorite songs yet. Tap the heart on a song." or "No songs match this view."
+	else
+		UI.musicEmpty.Text = ""
+	end
+	UI.musicEmpty.Visible = UI.musicEmpty.Text ~= ""
+	UI.musicFooter.Text = string.format("%d of %d songs", #musicVisible, #musicTracks)
+	restyleMusicRows()
+	UI.meta.scanSoon()
+end
+
+rescanMusic = function()
+	if not scanMusic() then
+		return
+	end
+	rebuildMusicChips()
+	refreshMusicList()
+	refreshNowPlaying()
+end
+
+local function pickNextTrack(auto)
+	if #musicQueue == 0 then
+		musicQueue = musicVisible
+	end
+	if #musicQueue == 0 then
+		return nil
+	end
+	if auto and settings.musicRepeat == 3 and musicCurrent then
+		return musicCurrent
+	end
+	if settings.musicShuffle and #musicQueue > 1 then
+		local cand
+		repeat
+			cand = musicQueue[math.random(#musicQueue)]
+		until not musicCurrent or cand.path ~= musicCurrent.path
+		return cand
+	end
+	local idx = 0
+	for i, t in ipairs(musicQueue) do
+		if musicCurrent and t.path == musicCurrent.path then
+			idx = i
+			break
+		end
+	end
+	local nextIdx = idx + 1
+	if nextIdx > #musicQueue then
+		if auto and settings.musicRepeat ~= 2 then
+			return nil
+		end
+		nextIdx = 1
+	end
+	return musicQueue[nextIdx]
+end
+
+local function pickPrevTrack()
+	if #musicHistory > 0 then
+		return table.remove(musicHistory), true
+	end
+	if #musicQueue == 0 then
+		musicQueue = musicVisible
+	end
+	if #musicQueue == 0 then
+		return nil
+	end
+	local idx = 1
+	for i, t in ipairs(musicQueue) do
+		if musicCurrent and t.path == musicCurrent.path then
+			idx = i
+			break
+		end
+	end
+	return musicQueue[idx - 1 >= 1 and idx - 1 or #musicQueue], false
+end
+
+local function loadMusicAsset(path)
+	if musicAssets[path] then
+		return musicAssets[path]
+	end
+	if not getcustomasset then
+		return nil
+	end
+	local ok, asset = pcall(getcustomasset, path)
+	if ok and asset then
+		musicAssets[path] = asset
+		return asset
+	end
+	return nil
+end
+
+playTrack = function(track, noHistory, startPos)
+	if not track then
+		return
+	end
+	if not getcustomasset then
+		notify("getcustomasset is not supported by your executor", "error")
+		return
+	end
+	local asset = loadMusicAsset(track.path)
+	if not asset then
+		notify("Could not load " .. track.name, "error")
+		return
+	end
+	if musicCurrent and not noHistory and musicCurrent.path ~= track.path then
+		table.insert(musicHistory, musicCurrent)
+		while #musicHistory > 50 do
+			table.remove(musicHistory, 1)
+		end
+	end
+	musicCurrent = track
+	musicLoadToken += 1
+	local mine = musicLoadToken
+	musicSound:Stop()
+	musicSound.SoundId = asset
+	UI.musicMeta.Text = "Loading..."
+	refreshNowPlaying()
+	task.spawn(function()
+		local waited = 0
+		while not musicSound.IsLoaded and waited < 12 and mine == musicLoadToken do
+			task.wait(0.1)
+			waited += 0.1
+		end
+		if mine ~= musicLoadToken then
+			return
+		end
+		if not musicSound.IsLoaded or musicSound.TimeLength <= 0 then
+			notify("Could not play " .. track.name .. " (unsupported or corrupt file)", "error")
+			UI.musicMeta.Text = "Could not play this file"
+			return
+		end
+		musicSound.PlaybackSpeed = settings.musicSpeed
+		if settings.musicFade > 0 then
+			musicSound.Volume = 0
+			tweenService:Create(musicSound, TweenInfo.new(settings.musicFade), { Volume = targetVolume() }):Play()
+		else
+			musicSound.Volume = targetVolume()
+		end
+		local from = tonumber(startPos) or 0
+		if from < 0 or from > musicSound.TimeLength - 1.5 then
+			from = 0
+		end
+		musicSound.TimePosition = from
+		musicSound:Play()
+		recordRecent(track)
+		settings.musicPos = from
+		settings.musicWasPlaying = true
+		if musicFilter == "recent" then
+			refreshMusicList()
+		end
+		refreshNowPlaying()
+		if settings.musicNotify then
+			notify((from > 0 and "Continuing: " or "Now playing: ") .. UI.meta.title(track, UI.meta.get(track)), "info")
+		end
+	end)
+end
+
+local function musicTogglePlay()
+	if musicSound.IsPlaying then
+		musicSound:Pause()
+	elseif musicCurrent and musicSound.IsLoaded and musicSound.TimeLength > 0 and musicSound.SoundId ~= "" then
+		musicSound:Resume()
+	elseif musicCurrent then
+		playTrack(musicCurrent, true)
+	else
+		if #musicVisible > 0 then
+			musicQueue = musicVisible
+			playTrack(settings.musicShuffle and musicVisible[math.random(#musicVisible)] or musicVisible[1])
+		else
+			notify("No songs in your library yet", "warn")
+		end
+	end
+	refreshNowPlaying()
+end
+local function musicNext()
+	local nxt = pickNextTrack(false)
+	if nxt then
+		playTrack(nxt)
+	else
+		notify("No songs in your library yet", "warn")
+	end
+end
+local function musicPrev()
+	if musicSound.IsPlaying and musicSound.TimePosition > 3 then
+		musicSound.TimePosition = 0
+		return
+	end
+	local prev, fromHistory = pickPrevTrack()
+	if prev then
+		playTrack(prev, fromHistory)
+	end
+end
+local function musicSkip(seconds)
+	if musicSound.TimeLength > 0 then
+		musicSound.TimePosition = math.clamp(musicSound.TimePosition + seconds, 0, musicSound.TimeLength - 0.05)
+	end
+end
+
+local function updateSleepLabel()
+	if musicSleepAt then
+		musicSleepLbl.Text = "Sleep: " .. math.max(0, math.ceil((musicSleepAt - os.clock()) / 60)) .. "m"
+	elseif musicSleepSong then
+		musicSleepLbl.Text = "Sleep: Song"
+	else
+		musicSleepLbl.Text = "Sleep: Off"
+	end
+end
+local function musicSleepStop()
+	if musicSound.IsPlaying then
+		if settings.musicSleepFade then
+			tweenService:Create(musicSound, TweenInfo.new(3), { Volume = 0 }):Play()
+			task.delay(3.1, function()
+				musicSound:Pause()
+				musicSound.Volume = targetVolume()
+				refreshNowPlaying()
+			end)
+		else
+			musicSound:Pause()
+			refreshNowPlaying()
+		end
+	end
+	notify("Sleep timer finished, music stopped", "info")
+end
+local function musicSleepFire()
+	musicSleepAt, musicSleepSong, musicSleepChoice = nil, false, 0
+	updateSleepLabel()
+	musicSleepStop()
+end
+local function setSleep(choice)
+	musicSleepChoice = choice
+	musicSleepAt, musicSleepSong = nil, false
+	if choice == "song" then
+		musicSleepSong = true
+		notify("Music will stop when this song ends", "info")
+	elseif type(choice) == "number" and choice > 0 then
+		musicSleepAt = os.clock() + choice * 60
+		notify("Sleep timer set for " .. choice .. " minute(s)", "info")
+	else
+		musicSleepChoice = 0
+		notify("Sleep timer is off", "info")
+	end
+	updateSleepLabel()
+end
+
+UI.musicFinished = false
+musicSound.Played:Connect(function()
+	UI.musicFinished = false
+end)
+musicSound.DidLoop:Connect(function()
+	if musicSleepSong then
+		musicSleepSong, musicSleepChoice = false, 0
+		musicSound:Pause()
+		musicSound.TimePosition = 0
+		updateSleepLabel()
+		notify("Sleep timer finished, music stopped", "info")
+		refreshNowPlaying()
+	end
+end)
+musicSound.Ended:Connect(function()
+	UI.musicFinished = true
+	if musicSleepSong then
+		musicSleepSong, musicSleepChoice = false, 0
+		updateSleepLabel()
+		notify("Sleep timer finished, music stopped", "info")
+		refreshNowPlaying()
+		return
+	end
+	if not settings.musicAutoNext and settings.musicRepeat ~= 3 then
+		refreshNowPlaying()
+		return
+	end
+	local nxt = pickNextTrack(true)
+	if nxt and musicCurrent and nxt.path == musicCurrent.path then
+		musicSound.TimePosition = 0
+		musicSound:Play()
+	elseif nxt then
+		playTrack(nxt)
+	else
+		refreshNowPlaying()
+	end
+end)
+
+refreshNowPlaying = function()
+	local t = musicCurrent
+	local tagMeta = t and UI.meta.get(t) or nil
+	UI.musicTitle.Text = t and UI.meta.title(t, tagMeta) or "Nothing playing"
+	UI.musicSub.Text = t and UI.meta.sub(t, tagMeta) or "Pick a song from your library"
+	if t and musicSound.TimeLength > 0 then
+		UI.musicMeta.Text = UI.meta.line(t, tagMeta, musicSound.TimeLength)
+	elseif not t then
+		UI.musicMeta.Text = ""
+	end
+	UI.meta.applyCover(tagMeta)
+	UI.musicInfoBtn.Visible = t ~= nil
+	if UI.lyrics.view.btn then
+		UI.lyrics.view.btn.Visible = t ~= nil
+	end
+	UI.musicPlayIcon.Text = musicSound.IsPlaying and "pause-large" or "play-large"
+	local fav = t ~= nil and musicFavSet[t.path] == true
+	musicHeartIcon.FontFace = iconFont(fav)
+	musicHeartIcon.TextColor3 = fav and C.red or C.text
+	musicShuffleBtn.BackgroundColor3 = settings.musicShuffle and accent() or C.card
+	musicShuffleIcon.FontFace = iconFont(settings.musicShuffle)
+	musicRepeatBtn.BackgroundColor3 = settings.musicRepeat > 1 and accent() or C.card
+	musicRepeatIcon.FontFace = iconFont(settings.musicRepeat > 1)
+	musicRepeatBadge.Visible = settings.musicRepeat == 3
+	if settings.musicShuffle then
+		UI.musicNext.Text = "Up next: shuffle"
+	else
+		local nxt = t and pickNextTrack(true) or nil
+		UI.musicNext.Text = nxt and ("Up next: " .. nxt.name) or "Up next: nothing"
+	end
+	restyleMusicRows()
+end
+
+local function updateMusicUI()
+	if UI.musicPage.Visible and UI.content.Visible then
+		local len = musicSound.TimeLength
+		if not musicSeek.dragging then
+			musicSeek.set(len > 0 and musicSound.TimePosition / len or 0)
+			UI.musicCur.Text = fmtTime(musicSound.TimePosition)
+		end
+		UI.musicTotal.Text = fmtTime(len)
+		local icon = musicSound.IsPlaying and "pause-large" or "play-large"
+		if UI.musicPlayIcon.Text ~= icon then
+			UI.musicPlayIcon.Text = icon
+		end
+		if musicSleepAt then
+			updateSleepLabel()
+		end
+	end
+end
+
+track(runService.Heartbeat:Connect(function(dt)
+	musicAcc += dt
+	if musicAcc < 0.1 then
+		return
+	end
+	musicAcc = 0
+	if musicSleepAt and os.clock() >= musicSleepAt then
+		musicSleepFire()
+	end
+	updateMusicUI()
+	if UI.musicPersist then
+		UI.musicPersist()
+	end
+end))
+track(userInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		musicSeek.finish()
+		musicVol.finish()
+		local full = UI.lyrics and UI.lyrics.view and UI.lyrics.view.fullSeek
+		if full then
+			full.finish()
+		end
+	end
+end))
+
+UI.musicPlayBtn.MouseButton1Click:Connect(musicTogglePlay)
+musicNextBtn.MouseButton1Click:Connect(musicNext)
+musicPrevBtn.MouseButton1Click:Connect(musicPrev)
+musicBackBtn.MouseButton1Click:Connect(function()
+	musicSkip(-10)
+end)
+musicFwdBtn.MouseButton1Click:Connect(function()
+	musicSkip(10)
+end)
+musicShuffleBtn.MouseButton1Click:Connect(function()
+	setSetting("musicShuffle", not settings.musicShuffle)
+end)
+musicRepeatBtn.MouseButton1Click:Connect(function()
+	setSetting("musicRepeat", (settings.musicRepeat % 3) + 1)
+end)
+musicHeartBtn.MouseButton1Click:Connect(function()
+	toggleFavorite(musicCurrent)
+end)
+musicMuteBtn.MouseButton1Click:Connect(function()
+	setSetting("musicMuted", not settings.musicMuted)
+end)
+musicSpeedBtn.MouseButton1Click:Connect(function()
+	local opts = {}
+	for _, v in ipairs(musicSpeeds) do
+		opts[#opts + 1] = { label = string.format("%gx", v), value = v, desc = v == 1 and "Normal" or nil }
+	end
+	opts[#opts + 1] = { label = "Custom...", value = "custom", icon = "pencil-square" }
+	ov.dropdown(musicSpeedBtn, opts, settings.musicSpeed, function(value)
+		if value ~= "custom" then
+			setSetting("musicSpeed", value)
+			return
+		end
+		ov.modal({
+			title = "Custom playback speed",
+			desc = "Enter a value from 0.1 to 5. A value of 1 is normal speed.",
+			fields = { { key = "speed", placeholder = "For example 1.35", text = string.format("%g", settings.musicSpeed) } },
+			onSubmit = function(values, api)
+				local n = tonumber(values.speed)
+				if not n or n < 0.1 or n > 5 then
+					api.status("Enter a number from 0.1 to 5", C.red)
+					return false
+				end
+				setSetting("musicSpeed", tonumber(string.format("%.2f", n)))
+				return true
+			end,
+		})
+	end, { search = false })
+end)
+musicPresetBtn.MouseButton1Click:Connect(function()
+	local opts = {}
+	for i, preset in ipairs(musicPresets) do
+		opts[i] = { label = preset.name, value = i, icon = "three-sliders-horizontal" }
+	end
+	ov.dropdown(musicPresetBtn, opts, settings.musicPreset, function(value)
+		setSetting("musicPreset", value)
+	end)
+end)
+musicSleepBtn.MouseButton1Click:Connect(function()
+	local opts = { { label = "Off", value = 0, icon = "moon" } }
+	for _, m in ipairs(musicSleeps) do
+		opts[#opts + 1] = { label = m .. " minutes", value = m }
+	end
+	opts[#opts + 1] = { label = "End of this song", value = "song", icon = "music-note" }
+	opts[#opts + 1] = { label = "Custom...", value = "custom", icon = "pencil-square" }
+	ov.dropdown(musicSleepBtn, opts, musicSleepChoice, function(value)
+		if value ~= "custom" then
+			setSleep(value)
+			return
+		end
+		ov.modal({
+			title = "Custom sleep timer",
+			desc = "Enter how many minutes of music you want, from 1 to 600.",
+			fields = { { key = "minutes", placeholder = "Minutes", text = tostring(settings.musicSleepDefault) } },
+			onSubmit = function(values, api)
+				local n = tonumber(values.minutes)
+				if not n or n < 1 or n > 600 then
+					api.status("Enter a number from 1 to 600", C.red)
+					return false
+				end
+				setSleep(math.floor(n + 0.5))
+				return true
+			end,
+		})
+	end, { search = false })
+end)
+musicRefreshBtn.MouseButton1Click:Connect(function()
+	rescanMusic()
+	notify("Found " .. #musicTracks .. " song(s)", "success")
+end)
+UI.musicSearch:GetPropertyChangedSignal("Text"):Connect(function()
+	refreshMusicList()
+end)
+
+local function downloadSong(urlText, customName, api)
+	local url = urlText:match("^%s*(.-)%s*$")
+	if url == "" then
+		api.status("Enter a direct link to an .mp3 or .ogg file", C.red)
+		return
+	end
+	if not url:match("^https?://") then
+		url = "https://" .. url
+	end
+	api.busy(true)
+	api.status("Downloading...", C.sub)
+	task.spawn(function()
+		local ok, data = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if not ok or type(data) ~= "string" or #data < 1000 then
+			api.busy(false)
+			api.status("Download failed. Check the link and try again.", C.red)
+			return
+		end
+		local ext
+		if data:sub(1, 4) == "OggS" then
+			ext = "ogg"
+		elseif data:sub(1, 3) == "ID3" or (data:byte(1) == 255 and (data:byte(2) or 0) >= 224) then
+			ext = "mp3"
+		end
+		if not ext then
+			api.busy(false)
+			api.status("That link is not an .mp3 or .ogg file", C.red)
+			return
+		end
+		local fileName = (url:gsub("[?#].*$", "")):match("([^/]+)$") or "song"
+		fileName = fileName:gsub("%.%w+$", "")
+		fileName = fileName:gsub("%%(%x%x)", function(h)
+			return string.char(tonumber(h, 16))
+		end)
+		local base = musicSanitize(customName ~= "" and customName or fileName)
+		fsEnsure(MUSIC_DIR)
+		local final = fsUnique(MUSIC_DIR, base .. "." .. ext)
+		if fsWrite(MUSIC_DIR .. "/" .. final, data) then
+			api.close()
+			rescanMusic()
+			notify("Saved " .. final .. " to your music library", "success")
+		else
+			api.busy(false)
+			api.status("Could not save the file", C.red)
+		end
+	end)
+end
+
+musicAddBtn.MouseButton1Click:Connect(function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	ov.modal({
+		title = "Add song from URL",
+		desc = "Paste a direct link to an .mp3 or .ogg file. It is saved to your music library.",
+		fields = {
+			{ key = "url", placeholder = "Direct link to an .mp3 or .ogg file..." },
+			{ key = "name", placeholder = "Song name (optional)" },
+		},
+		okText = "Enter",
+		okIcon = "cloud-arrow-down",
+		onSubmit = function(values, api)
+			downloadSong(values.url, values.name, api)
+			return false
+		end,
+	})
+end)
+
+bind("musicVolume", function(v)
+	musicVol.set(v)
+	UI.musicVolLabel.Text = string.format("%d%%", math.floor(v * 100 + 0.5))
+	if not settings.musicMuted then
+		musicSound.Volume = v
+	end
+end)
+bind("musicMuted", function(m)
+	musicSound.Volume = m and 0 or settings.musicVolume
+	musicMuteIcon.Text = m and "speaker-slash" or "speaker"
+	musicMuteIcon.FontFace = iconFont(m)
+end)
+bind("musicSpeed", function(v)
+	musicSound.PlaybackSpeed = v
+	musicSpeedLbl.Text = string.format("%gx", v)
+	applyEffects()
+end)
+bind("musicKeepPitch", function()
+	applyEffects()
+end, true)
+bind("musicPreset", function(v)
+	local preset = musicPresets[v] or musicPresets[1]
+	musicPresetLbl.Text = preset.name
+	applyEffects()
+end)
+bind("musicShuffle", function()
+	refreshNowPlaying()
+end)
+bind("musicRepeat", function(v)
+	musicSound.Looped = v == 3
+	if v == 3 and UI.musicFinished and musicCurrent and musicSound.IsLoaded and musicSound.TimeLength > 0 and not musicSound.IsPlaying then
+		UI.musicFinished = false
+		musicSound.TimePosition = 0
+		musicSound:Play()
+	end
+	refreshNowPlaying()
+end)
+bind("musicSort", function()
+	refreshMusicList()
+end, true)
+bind("accent", function()
+	musicSeek.fill.BackgroundColor3 = accent()
+	musicVol.fill.BackgroundColor3 = accent()
+	UI.musicArtGradient.Color = ColorSequence.new(artTint(0.66), artTint(0.9))
+	styleMusicChips()
+	refreshNowPlaying()
+end, true)
+
+UI.musicPersistAt = 0
+
+function UI.musicPersist(force)
+	local t = musicCurrent
+	if not t or not settings.musicContinue then
+		return
+	end
+	if not (musicSound.IsLoaded and musicSound.TimeLength > 0) then
+		return
+	end
+	local playing = musicSound.IsPlaying == true
+	local pos = musicSound.TimePosition
+	local now = os.clock()
+	local changed = playing ~= settings.musicWasPlaying
+	if not changed and not force then
+		if now - UI.musicPersistAt < 4 or math.abs(pos - settings.musicPos) < 0.5 then
+			return
+		end
+	end
+	UI.musicPersistAt = now
+	settings.musicPos = pos
+	settings.musicWasPlaying = playing
+	saveSettings()
+end
+
+onCleanup(function()
+	UI.musicPersist(true)
+	musicSound:Stop()
+	musicSound:Destroy()
+end)
+
+local function startupMusic()
+	rescanMusic()
+	if settings.musicContinue and settings.musicWasPlaying and settings.musicLast ~= "" and not musicCurrent then
+		for _, t in ipairs(musicTracks) do
+			if t.path == settings.musicLast then
+				playTrack(t, true, settings.musicPos)
+				return
+			end
+		end
+	end
+	if settings.musicResume and settings.musicLast ~= "" and not musicCurrent then
+		for _, t in ipairs(musicTracks) do
+			if t.path == settings.musicLast then
+				musicCurrent = t
+				refreshNowPlaying()
+				break
+			end
+		end
+	end
+end
+
+UI.lyrics = { dir = ROOT .. "/Lyrics", cache = {}, view = {} }
+
+function UI.lyrics.clock(text)
+	text = tostring(text or ""):match("^%s*(.-)%s*$")
+	local n = text:match("^([%d%.]+)ms$")
+	if n then
+		return (tonumber(n) or 0) / 1000
+	end
+	n = text:match("^([%d%.]+)s$")
+	if n then
+		return tonumber(n)
+	end
+	n = text:match("^([%d%.]+)m$")
+	if n then
+		return (tonumber(n) or 0) * 60
+	end
+	n = text:match("^([%d%.]+)h$")
+	if n then
+		return (tonumber(n) or 0) * 3600
+	end
+	if text == "" or text:find("[^%d%.:]") then
+		return nil
+	end
+	local total = 0
+	for piece in text:gmatch("[^:]+") do
+		local v = tonumber(piece)
+		if not v then
+			return nil
+		end
+		total = total * 60 + v
+	end
+	return total
+end
+
+function UI.lyrics.lrcTime(text)
+	local minutes, seconds, frac = text:match("^%s*(%d+):(%d%d?)[%.:](%d+)%s*$")
+	if minutes then
+		return tonumber(minutes) * 60 + tonumber(seconds) + tonumber(frac) / (10 ^ #frac)
+	end
+	minutes, seconds = text:match("^%s*(%d+):(%d%d?)%s*$")
+	if minutes then
+		return tonumber(minutes) * 60 + tonumber(seconds)
+	end
+	return nil
+end
+
+function UI.lyrics.unescape(s)
+	s = s:gsub("&#[xX](%x+);", function(h)
+		local ok, ch = pcall(utf8.char, tonumber(h, 16))
+		return ok and ch or ""
+	end)
+	s = s:gsub("&#(%d+);", function(d)
+		local ok, ch = pcall(utf8.char, tonumber(d))
+		return ok and ch or ""
+	end)
+	return (s:gsub("&(%a+);", { amp = "&", lt = "<", gt = ">", quot = '"', apos = "'" }))
+end
+
+function UI.lyrics.voiceOf(text)
+	local tag, rest = text:match("^%s*(%w+)%s*:%s*(.*)$")
+	if tag then
+		local low = tag:lower()
+		local voice
+		if low == "v1" or low == "m" or low == "male" then
+			voice = 1
+		elseif low == "v2" or low == "f" or low == "female" then
+			voice = 2
+		elseif low == "d" or low == "v1000" or low == "both" or low == "duet" or low == "all" then
+			voice = 0
+		end
+		if voice ~= nil then
+			return voice, rest
+		end
+	end
+	return nil, text
+end
+
+function UI.lyrics.splitWords(text)
+	local out = {}
+	local buffer = ""
+	local function flush(space)
+		if buffer ~= "" then
+			out[#out + 1] = { text = buffer, space = space }
+			buffer = ""
+		end
+	end
+	local ok = pcall(function()
+		for _, code in utf8.codes(text) do
+			local ch = utf8.char(code)
+			if ch:match("%s") then
+				flush(true)
+			elseif (code >= 0x3040 and code <= 0x9FFF) or (code >= 0xAC00 and code <= 0xD7AF) or (code >= 0xFF00 and code <= 0xFFEF) then
+				flush(false)
+				out[#out + 1] = { text = ch, space = false }
+			else
+				buffer = buffer .. ch
+			end
+		end
+	end)
+	if not ok then
+		out, buffer = {}, ""
+		for piece in text:gmatch("%S+") do
+			out[#out + 1] = { text = piece, space = true }
+		end
+	end
+	flush(false)
+	if #out > 0 then
+		out[#out].space = false
+	end
+	return out
+end
+
+function UI.lyrics.parseWordTags(body, lineStart)
+	local segments = {}
+	local pos = 1
+	local time = lineStart
+	while true do
+		local a, b, stamp = body:find("<(%d+:%d+[%.:]?%d*)>", pos)
+		if not a then
+			segments[#segments + 1] = { t = time, text = body:sub(pos) }
+			break
+		end
+		segments[#segments + 1] = { t = time, text = body:sub(pos, a - 1) }
+		time = UI.lyrics.lrcTime(stamp) or time
+		pos = b + 1
+	end
+	local words = {}
+	for i, seg in ipairs(segments) do
+		local raw = seg.text
+		local trimmed = raw:match("^%s*(.-)%s*$")
+		if trimmed ~= "" then
+			if raw:match("^%s") and #words > 0 then
+				words[#words].space = true
+			end
+			local nextT = segments[i + 1] and segments[i + 1].t or nil
+			words[#words + 1] = { t = seg.t, e = nextT, text = trimmed, space = raw:match("%s$") ~= nil }
+		end
+	end
+	local lastEnd = segments[#segments] and segments[#segments].t or nil
+	return words, lastEnd
+end
+
+function UI.lyrics.joinWords(words)
+	local parts = {}
+	for i, w in ipairs(words) do
+		parts[#parts + 1] = w.text
+		if w.space and i < #words then
+			parts[#parts + 1] = " "
+		end
+	end
+	return table.concat(parts)
+end
+
+function UI.lyrics.finish(doc, plainLines)
+	local lines = doc.lines
+	for i, line in ipairs(lines) do
+		line.order = i
+	end
+	table.sort(lines, function(a, b)
+		if a.t ~= b.t then
+			return a.t < b.t
+		end
+		return a.order < b.order
+	end)
+	local voices = {}
+	for _, line in ipairs(lines) do
+		if line.voice ~= nil and not line.bg then
+			voices[line.voice] = true
+		end
+	end
+	local count = 0
+	for voice in pairs(voices) do
+		if voice ~= 0 then
+			count += 1
+		end
+	end
+	doc.duet = count > 1 or (voices[0] == true and count > 0)
+	local total = #lines
+	for i, line in ipairs(lines) do
+		local nextStart
+		for j = i + 1, total do
+			if lines[j].t > line.t + 0.02 then
+				nextStart = lines[j].t
+				break
+			end
+		end
+		line.n = nextStart or (line.t + 6)
+		local chars = utf8.len(line.text) or #line.text
+		if line.words and #line.words > 0 and line.timed then
+			local last = line.words[#line.words]
+			for k, w in ipairs(line.words) do
+				if not w.e then
+					w.e = line.words[k + 1] and line.words[k + 1].t or nil
+				end
+			end
+			if not last.e then
+				last.e = math.min(line.n, last.t + 0.6 + 0.05 * (utf8.len(last.text) or 1))
+			end
+			line.e = math.max(last.e, line.t + 0.1)
+			doc.wordSynced = true
+		else
+			local window = math.max(0.3, line.n - line.t)
+			local dur = math.min(window, 0.35 + chars * 0.075)
+			if line.text == "" then
+				dur = window
+			end
+			line.e = line.t + dur
+			line.words = UI.lyrics.splitWords(line.text)
+			local weight = 0
+			for _, w in ipairs(line.words) do
+				w.weight = (utf8.len(w.text) or #w.text) + 0.6
+				weight += w.weight
+			end
+			local acc = 0
+			for _, w in ipairs(line.words) do
+				w.t = line.t + dur * acc / math.max(weight, 0.01)
+				acc += w.weight
+				w.e = line.t + dur * acc / math.max(weight, 0.01)
+			end
+			line.estimated = true
+		end
+		line.rest = line.text == ""
+	end
+	doc.synced = total > 0
+	return doc
+end
+
+function UI.lyrics.parseLrc(text)
+	local doc = { kind = "lrc", lines = {}, wordSynced = false, duet = false, meta = {} }
+	local offset = 0
+	local voice = 1
+	text = text:gsub("^\239\187\191", "")
+	for row in (text .. "\n"):gmatch("(.-)\r?\n") do
+		local times = {}
+		local bg = false
+		local body = row
+		local skip = false
+		while true do
+			local tag, rest = body:match("^%s*%[([^%]]*)%](.*)$")
+			if not tag then
+				break
+			end
+			local stamp = UI.lyrics.lrcTime(tag)
+			if stamp then
+				times[#times + 1] = stamp
+				body = rest
+			else
+				local key, value = tag:match("^%s*(%a+)%s*:%s*(.-)%s*$")
+				key = key and key:lower()
+				if key == "bg" then
+					bg = true
+					body = value .. rest
+				elseif key then
+					if key == "offset" then
+						offset = tonumber(value) or 0
+					else
+						doc.meta[key] = value
+					end
+					if #times == 0 then
+						skip = true
+					end
+					body = rest
+					break
+				else
+					break
+				end
+			end
+		end
+		if not skip then
+			local explicit
+			explicit, body = UI.lyrics.voiceOf(body)
+			if explicit ~= nil then
+				voice = explicit
+			end
+			local trimmed = body:match("^%s*(.-)%s*$")
+			local hasWords = trimmed:find("<%d+:%d+[%.:]?%d*>") ~= nil
+			if #times == 0 and hasWords then
+				local first = trimmed:match("<(%d+:%d+[%.:]?%d*)>")
+				times[1] = UI.lyrics.lrcTime(first)
+			end
+			if trimmed:match("^%b()$") and not hasWords then
+				bg = true
+			end
+			for _, stamp in ipairs(times) do
+				if stamp then
+					local line = { t = stamp, voice = voice, bg = bg }
+					if hasWords then
+						local words = UI.lyrics.parseWordTags(trimmed, stamp)
+						line.words = words
+						line.timed = #words > 0
+						line.text = UI.lyrics.joinWords(words)
+					else
+						line.text = trimmed
+					end
+					doc.lines[#doc.lines + 1] = line
+				end
+			end
+		end
+	end
+	if offset ~= 0 then
+		for _, line in ipairs(doc.lines) do
+			line.t = math.max(0, line.t - offset / 1000)
+			for _, w in ipairs(line.words or {}) do
+				w.t = math.max(0, w.t - offset / 1000)
+				if w.e then
+					w.e = math.max(0, w.e - offset / 1000)
+				end
+			end
+		end
+	end
+	doc.title, doc.artist = doc.meta.ti, doc.meta.ar
+	return UI.lyrics.finish(doc)
+end
+
+function UI.lyrics.attrs(text)
+	local out = {}
+	for key, value in text:gmatch('([%w:_%-]+)%s*=%s*"([^"]*)"') do
+		out[key] = value
+	end
+	for key, value in text:gmatch("([%w:_%-]+)%s*=%s*'([^']*)'") do
+		if out[key] == nil then
+			out[key] = value
+		end
+	end
+	return out
+end
+
+function UI.lyrics.parseTtml(text)
+	local doc = { kind = "ttml", lines = {}, wordSynced = false, duet = false, meta = {} }
+	local agentOrder, agentKind = {}, {}
+	local function agentIndex(id)
+		if not id or id == "" then
+			return 1
+		end
+		for i, known in ipairs(agentOrder) do
+			if known == id then
+				return i
+			end
+		end
+		agentOrder[#agentOrder + 1] = id
+		return #agentOrder
+	end
+	local function voiceFor(id)
+		if not id then
+			return 1
+		end
+		local kind = agentKind[id]
+		if id == "v1000" or kind == "group" or kind == "other" then
+			return 0
+		end
+		return ((agentIndex(id) - 1) % 2) + 1
+	end
+	local pos = 1
+	local p, stack = nil, {}
+	local function addText(raw)
+		if not p or raw == "" then
+			return
+		end
+		raw = UI.lyrics.unescape((raw:gsub("[\r\n]+", " ")))
+		local top = stack[#stack]
+		if top and top.begin then
+			local trimmed = raw:match("^%s*(.-)%s*$")
+			if trimmed ~= "" then
+				local target = top.bg and p.bgWords or p.words
+				target[#target + 1] = { t = top.begin, e = top.finish, text = trimmed, space = raw:match("%s$") ~= nil }
+				if raw:match("^%s") and #target > 1 then
+					target[#target - 1].space = true
+				end
+			end
+		else
+			local trimmed = raw:match("^%s*(.-)%s*$")
+			if trimmed ~= "" then
+				if top and top.bg then
+					p.bgPlain = (p.bgPlain or "") .. raw
+				else
+					p.plain = (p.plain or "") .. raw
+				end
+			elseif #stack == 0 or (top and not top.begin) then
+				local target = (top and top.bg) and p.bgWords or p.words
+				if #target > 0 then
+					target[#target].space = true
+				end
+			end
+		end
+	end
+	local function closeParagraph()
+		if not p then
+			return
+		end
+		local voice = voiceFor(p.agent)
+		local function push(words, plain, bg)
+			local line = { voice = voice, bg = bg }
+			if #words > 0 then
+				line.words = words
+				line.timed = true
+				line.t = p.begin and math.min(p.begin, words[1].t) or words[1].t
+				if bg then
+					line.t = words[1].t
+				end
+				line.text = UI.lyrics.joinWords(words)
+			elseif plain and plain:match("%S") then
+				line.t = p.begin
+				line.text = (plain:gsub("%s+", " ")):match("^%s*(.-)%s*$")
+			end
+			if line.text and line.t then
+				doc.lines[#doc.lines + 1] = line
+			end
+		end
+		push(p.words, p.plain, false)
+		push(p.bgWords, p.bgPlain, true)
+		p = nil
+	end
+	while true do
+		local a, b, closing, name, attrText = text:find("<(/?)([%w:_%-]+)([^>]*)>", pos)
+		if not a then
+			break
+		end
+		addText(text:sub(pos, a - 1))
+		pos = b + 1
+		local lower = name:lower()
+		local selfClose = attrText:sub(-1) == "/"
+		local attr = UI.lyrics.attrs(attrText)
+		if closing == "" then
+			if lower == "ttm:agent" or lower == "agent" then
+				local id = attr["xml:id"] or attr.id
+				if id then
+					agentKind[id] = attr.type
+					agentIndex(id)
+				end
+			elseif lower == "p" and not selfClose then
+				closeParagraph()
+				p = {
+					begin = UI.lyrics.clock(attr.begin),
+					finish = UI.lyrics.clock(attr["end"]),
+					agent = attr["ttm:agent"] or attr.agent,
+					words = {},
+					bgWords = {},
+				}
+				stack = {}
+			elseif lower == "span" and p and not selfClose then
+				local role = attr["ttm:role"] or attr.role
+				local parent = stack[#stack]
+				stack[#stack + 1] = {
+					begin = UI.lyrics.clock(attr.begin),
+					finish = UI.lyrics.clock(attr["end"]),
+					bg = role == "x-bg" or (parent and parent.bg) or false,
+				}
+			elseif lower == "br" and p then
+				addText(" ")
+			end
+		else
+			if lower == "span" then
+				stack[#stack] = nil
+			elseif lower == "p" then
+				closeParagraph()
+				stack = {}
+			end
+		end
+	end
+	closeParagraph()
+	doc.title = nil
+	return UI.lyrics.finish(doc)
+end
+
+function UI.lyrics.parsePlain(text)
+	local doc = { kind = "plain", lines = {}, wordSynced = false, duet = false, meta = {}, synced = false }
+	text = text:gsub("^\239\187\191", "")
+	for row in (text .. "\n"):gmatch("(.-)\r?\n") do
+		local trimmed = row:match("^%s*(.-)%s*$")
+		doc.lines[#doc.lines + 1] = { text = trimmed, voice = 1, words = {}, rest = trimmed == "" }
+	end
+	while #doc.lines > 0 and doc.lines[#doc.lines].text == "" do
+		doc.lines[#doc.lines] = nil
+	end
+	while #doc.lines > 0 and doc.lines[1].text == "" do
+		table.remove(doc.lines, 1)
+	end
+	return doc
+end
+
+function UI.lyrics.parse(text)
+	if type(text) ~= "string" or text:match("^%s*$") then
+		return nil
+	end
+	local doc
+	if text:find("<tt[%s>]") or (text:find("<%?xml") and text:find("<p[%s>]")) then
+		doc = UI.lyrics.parseTtml(text)
+	elseif text:find("%[%d+:%d+[%.:]?%d*%]") or text:find("\n%s*<%d+:%d+[%.:]?%d*>") or text:find("^%s*%[bg:") then
+		doc = UI.lyrics.parseLrc(text)
+	end
+	if not doc or #doc.lines == 0 then
+		doc = UI.lyrics.parsePlain(text)
+	end
+	if #doc.lines == 0 then
+		return nil
+	end
+	return doc
+end
+
+function UI.lyrics.cleanName(name)
+	name = tostring(name or ""):gsub("_", " ")
+	name = name:gsub("%s*[%(%[][^%)%]]*[Oo]fficial[^%)%]]*[%)%]]", "")
+	name = name:gsub("%s*[%(%[][^%)%]]*[Ll]yric[^%)%]]*[%)%]]", "")
+	name = name:gsub("%s*[%(%[][^%)%]]*[Aa]udio[^%)%]]*[%)%]]", "")
+	name = name:gsub("^%s*%d+%s*[%.%-]%s*", "")
+	return (name:gsub("%s+", " "):match("^%s*(.-)%s*$"))
+end
+
+function UI.lyrics.queryInfo(track, meta, length)
+	local title = meta and meta.title or nil
+	local artist = meta and meta.artist or nil
+	if not title or title == "" then
+		local cleaned = UI.lyrics.cleanName(track.name)
+		local left, right = cleaned:match("^(.-)%s+%-%s+(.+)$")
+		if left and (not artist or artist == "") then
+			artist, title = left, right
+		else
+			title = cleaned
+		end
+	end
+	local duration = meta and meta.duration or length
+	return { title = title, artist = artist or "", album = meta and meta.album or nil, duration = duration }
+end
+
+function UI.lyrics.cacheKey(info)
+	local text = (info.artist .. " " .. info.title):lower()
+	local hash = 5381
+	for i = 1, #text do
+		hash = (hash * 33 + text:byte(i)) % 4294967296
+	end
+	local readable = string.sub((text:gsub("[^%w]+", "_")), 1, 40)
+	return readable .. "_" .. string.format("%08x", hash)
+end
+
+function UI.lyrics.requestJson(url)
+	local ok, body = pcall(function()
+		return game:HttpGet(url)
+	end)
+	if not ok or type(body) ~= "string" or body == "" then
+		return nil
+	end
+	local decoded, data = pcall(function()
+		return httpService:JSONDecode(body)
+	end)
+	if decoded then
+		return data
+	end
+	return nil
+end
+
+function UI.lyrics.firstArtist(artist)
+	local first = tostring(artist or ""):gsub("%s+[Ff]e?a?t%.?%s.*$", ""):match("^([^,;&/]+)") or ""
+	first = first:gsub("%s+[xX]%s+.*$", "")
+	return (first:match("^%s*(.-)%s*$"))
+end
+
+function UI.lyrics.fetchOnline(info)
+	local function enc(text)
+		return httpService:UrlEncode(text)
+	end
+	local function usable(item)
+		return type(item) == "table" and ((type(item.syncedLyrics) == "string" and item.syncedLyrics ~= "") or (type(item.plainLyrics) == "string" and item.plainLyrics ~= ""))
+	end
+	local first = UI.lyrics.firstArtist(info.artist)
+	local title = info.title:gsub("%s*[%(%[][^%)%]]*[Ff]e?a?t[^%)%]]*[%)%]]", ""):match("^%s*(.-)%s*$")
+	if title == "" then
+		title = info.title
+	end
+	local hasDuration = type(info.duration) == "number" and info.duration > 0
+	local pick
+	local function exact(artist, withAlbum)
+		if pick or artist == "" then
+			return
+		end
+		local query = "track_name=" .. enc(title) .. "&artist_name=" .. enc(artist)
+		if withAlbum and info.album and info.album ~= "" then
+			query = query .. "&album_name=" .. enc(info.album)
+		end
+		if hasDuration then
+			query = query .. "&duration=" .. math.floor(info.duration + 0.5)
+		end
+		local data = UI.lyrics.requestJson("https://lrclib.net/api/get?" .. query)
+		if usable(data) then
+			pick = data
+		end
+	end
+	local function search(query)
+		if pick then
+			return
+		end
+		local list = UI.lyrics.requestJson("https://lrclib.net/api/search?" .. query)
+		if type(list) ~= "table" then
+			return
+		end
+		local bestScore = -1
+		for _, item in ipairs(list) do
+			if usable(item) then
+				local score = 1
+				if type(item.syncedLyrics) == "string" and item.syncedLyrics ~= "" then
+					score += 4
+				end
+				local related = not hasDuration and first == ""
+				if hasDuration and type(item.duration) == "number" and math.abs(item.duration - info.duration) <= 3 then
+					score += 3
+					related = true
+				end
+				if first ~= "" and type(item.artistName) == "string" and item.artistName:lower():find(first:lower(), 1, true) then
+					score += 2
+					related = true
+				end
+				if not related then
+					score = -1
+				end
+				if type(item.trackName) == "string" and item.trackName:lower() == title:lower() then
+					score += 1
+				end
+				if score > bestScore then
+					bestScore, pick = score, item
+				end
+			end
+		end
+	end
+	exact(info.artist, true)
+	exact(first, false)
+	if first ~= "" then
+		search("track_name=" .. enc(title) .. "&artist_name=" .. enc(first))
+		search("q=" .. enc(first .. " " .. title))
+	end
+	search("track_name=" .. enc(title))
+	search("q=" .. enc(title))
+	if not pick then
+		return nil, nil
+	end
+	local synced = type(pick.syncedLyrics) == "string" and pick.syncedLyrics ~= "" and pick.syncedLyrics or nil
+	local plain = type(pick.plainLyrics) == "string" and pick.plainLyrics ~= "" and pick.plainLyrics or nil
+	return synced, plain
+end
+
+function UI.lyrics.resolve(track, cancelled)
+	local L = UI.lyrics
+	local fallback
+	local function take(text, label)
+		local doc = text and L.parse(text)
+		if doc and doc.synced then
+			return doc, label
+		end
+		if doc and not fallback then
+			fallback = { doc = doc, label = label }
+		end
+		return nil
+	end
+	local base = track.path:gsub("%.[^%./\\]+$", "")
+	local name = base:match("[^/\\]+$") or track.name
+	if hasFS then
+		for _, spot in ipairs({ base, L.dir .. "/" .. name }) do
+			for _, ext in ipairs({ ".ttml", ".lrc", ".txt" }) do
+				local data = fsRead(spot .. ext)
+				if data and #data > 0 then
+					local doc, label = take(data, "File " .. name .. ext)
+					if doc then
+						return doc, label
+					end
+				end
+			end
+		end
+	end
+	if cancelled() then
+		return nil
+	end
+	local meta, done = nil, false
+	UI.meta.request(track, function(result)
+		meta = result or nil
+		done = true
+	end)
+	local waited = 0
+	while not done and waited < 6 and not cancelled() do
+		task.wait(0.05)
+		waited += 0.05
+	end
+	if cancelled() then
+		return nil
+	end
+	if meta and meta.lyrics then
+		local doc, label = take(meta.lyrics, "Song tag")
+		if doc then
+			return doc, label
+		end
+	end
+	local length = musicSound.TimeLength
+	local info = L.queryInfo(track, meta, length)
+	local key = L.cacheKey(info)
+	if hasFS then
+		local cached = fsRead(L.dir .. "/" .. key .. ".lrc")
+		if cached and #cached > 0 then
+			local doc, label = take(cached, "Saved lyrics")
+			if doc then
+				return doc, label
+			end
+		end
+		local plainCached = fsRead(L.dir .. "/" .. key .. ".txt")
+		if plainCached and #plainCached > 0 then
+			take(plainCached, "Saved lyrics")
+		end
+	end
+	if settings.lyricsOnline and not cancelled() and info.title ~= "" then
+		local synced, plain = L.fetchOnline(info)
+		if cancelled() then
+			return nil
+		end
+		if hasFS and (synced or plain) then
+			pcall(function()
+				fsEnsure(L.dir)
+				if synced then
+					fsWrite(L.dir .. "/" .. key .. ".lrc", synced)
+				elseif plain then
+					fsWrite(L.dir .. "/" .. key .. ".txt", plain)
+				end
+			end)
+		end
+		local doc, label = take(synced, "LRCLIB")
+		if doc then
+			return doc, label
+		end
+		take(plain, "LRCLIB")
+	end
+	if fallback then
+		return fallback.doc, fallback.label
+	end
+	return nil
+end
+
+local V = UI.lyrics.view
+V.mode = nil
+V.token = 0
+V.buildToken = 0
+V.status = "idle"
+V.trackPath = nil
+V.doc = nil
+V.label = ""
+V.items = {}
+V.rows = {}
+V.cache = {}
+V.cacheCount = 0
+V.cur = 0
+V.scrollY = 0
+V.manualUntil = 0
+V.snap = 0
+V.builtSize = 0
+V.padHeight = -1
+V.hover = false
+V.BG = Color3.new(0.085, 0.085, 0.1)
+V.FULL_BG = Color3.new(0.045, 0.045, 0.06)
+V.DIM = 0.55
+V.GRADIENT = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 0),
+	NumberSequenceKeypoint.new(0.46, 0),
+	NumberSequenceKeypoint.new(0.54, V.DIM),
+	NumberSequenceKeypoint.new(1, V.DIM),
+})
+
+function V.baseSize()
+	local size = tonumber(settings.lyricsSize) or 20
+	size = math.clamp(size, 12, 40)
+	if V.mode == "full" then
+		return math.floor(size * 1.55 + 0.5)
+	end
+	return size
+end
+
+function V.animOn()
+	return settings.lyricsAnim ~= false
+end
+
+function V.offsetSeconds()
+	return (tonumber(settings.lyricsOffset) or 0) / 1000
+end
+
+function V.now()
+	return musicSound.TimePosition + V.offsetSeconds()
+end
+
+function V.textBtn(text, width, parent)
+	local b = new("TextButton", {
+		Size = UDim2.fromOffset(width, 32),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.3,
+		AutoButtonColor = false,
+		Text = text,
+		TextColor3 = C.text,
+		TextSize = 16,
+		FontFace = sans(),
+	}, parent)
+	corner(b, 6)
+	b.MouseEnter:Connect(function()
+		b.BackgroundTransparency = 0.05
+	end)
+	b.MouseLeave:Connect(function()
+		b.BackgroundTransparency = 0.3
+	end)
+	return b
+end
+
+function V.header(parent, titleWidth)
+	local title = new("TextLabel", {
+		Position = UDim2.new(0, 16, 0, 8),
+		Size = UDim2.new(1, -titleWidth, 0, 22),
+		BackgroundTransparency = 1,
+		Text = "Lyrics",
+		TextColor3 = C.text,
+		TextSize = 16,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, parent)
+	local sub = new("TextLabel", {
+		Position = UDim2.new(0, 16, 0, 30),
+		Size = UDim2.new(1, -titleWidth, 0, 16),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, parent)
+	return title, sub
+end
+
+function V.lift(root, base)
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			d.ZIndex = (tonumber(d.ZIndex) or 1) + base
+		end
+	end
+end
+
+function V.ensureUI()
+	if V.panel then
+		return
+	end
+	V.panel = new("Frame", {
+		Name = "LyricsPanel",
+		Position = UDim2.new(0, 16, 0, 16),
+		Size = UDim2.new(0, 356, 1, -40),
+		BackgroundColor3 = V.BG,
+		BorderSizePixel = 0,
+		Active = true,
+		Visible = false,
+		ZIndex = 40,
+	}, UI.musicPage)
+	corner(V.panel, 8)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.92, Thickness = 1 }, V.panel)
+	V.panelTitle, V.panelSub = V.header(V.panel, 100)
+	local fullBtn = iconBtn("", { "frame-expanded" }, 32, V.panel, 32, false)
+	fullBtn.AnchorPoint = Vector2.new(1, 0)
+	fullBtn.Position = UDim2.new(1, -52, 0, 8)
+	fullBtn.MouseButton1Click:Connect(function()
+		V.setMode("full")
+	end)
+	local closeBtn = iconBtn("", { "x" }, 32, V.panel, 32, false)
+	closeBtn.AnchorPoint = Vector2.new(1, 0)
+	closeBtn.Position = UDim2.new(1, -12, 0, 8)
+	closeBtn.MouseButton1Click:Connect(function()
+		V.close()
+	end)
+	V.panelHost = new("Frame", {
+		Position = UDim2.new(0, 6, 0, 54),
+		Size = UDim2.new(1, -12, 1, -60),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+		Active = true,
+	}, V.panel)
+
+	V.full = new("Frame", {
+		Name = "LyricsFullscreen",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundColor3 = V.FULL_BG,
+		BackgroundTransparency = 0.02,
+		BorderSizePixel = 0,
+		Active = true,
+		Visible = false,
+		ZIndex = 60,
+	}, UI.windowFrame)
+	corner(V.full, 8)
+	new("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.9, Thickness = 1 }, V.full)
+	V.fullTitle, V.fullSub = V.header(V.full, 330)
+	V.fullTitle.Position = UDim2.new(0, 24, 0, 10)
+	V.fullSub.Position = UDim2.new(0, 24, 0, 32)
+	V.fullTitle.TextSize = 18
+	local exitBtn = iconBtn("", { "x" }, 32, V.full, 32, false)
+	exitBtn.AnchorPoint = Vector2.new(1, 0)
+	exitBtn.Position = UDim2.new(1, -16, 0, 12)
+	exitBtn.MouseButton1Click:Connect(function()
+		V.setMode("panel")
+	end)
+	local plus = V.textBtn("+", 32, V.full)
+	plus.AnchorPoint = Vector2.new(1, 0)
+	plus.Position = UDim2.new(1, -60, 0, 12)
+	plus.MouseButton1Click:Connect(function()
+		V.nudge(100)
+	end)
+	V.offsetLabel = new("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -98, 0, 12),
+		Size = UDim2.fromOffset(74, 32),
+		BackgroundTransparency = 1,
+		Text = "Sync 0.0s",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		FontFace = sans(Enum.FontWeight.Medium),
+	}, V.full)
+	local minus = V.textBtn("-", 32, V.full)
+	minus.AnchorPoint = Vector2.new(1, 0)
+	minus.Position = UDim2.new(1, -176, 0, 12)
+	minus.MouseButton1Click:Connect(function()
+		V.nudge(-100)
+	end)
+	V.fullHost = new("Frame", {
+		Position = UDim2.new(0, 40, 0, 62),
+		Size = UDim2.new(1, -80, 1, -150),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+	}, V.full)
+
+	local bar = new("Frame", {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, -8),
+		Size = UDim2.new(1, 0, 0, 76),
+		BackgroundTransparency = 1,
+	}, V.full)
+	V.fullCur = new("TextLabel", {
+		Position = UDim2.new(0, 40, 0, 0),
+		Size = UDim2.fromOffset(48, 20),
+		BackgroundTransparency = 1,
+		Text = "0:00",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, bar)
+	V.fullTotal = new("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -40, 0, 0),
+		Size = UDim2.fromOffset(48, 20),
+		BackgroundTransparency = 1,
+		Text = "0:00",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, bar)
+	V.fullSeek = makeSlider(bar, UDim2.new(0, 96, 0, 0), UDim2.new(1, -192, 0, 20), function(a)
+		V.fullCur.Text = fmtTime(a * musicSound.TimeLength)
+	end, function(a)
+		if musicSound.TimeLength > 0 then
+			musicSound.TimePosition = a * musicSound.TimeLength
+		end
+	end)
+	local controls = new("Frame", { Position = UDim2.new(0, 0, 0, 22), Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1 }, bar)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 14),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, controls)
+	local prev = iconBtn("", { "skip-previous-small" }, 40, controls, 40, false)
+	prev.LayoutOrder = 1
+	prev.MouseButton1Click:Connect(musicPrev)
+	V.playBtn = new("TextButton", { Size = UDim2.fromOffset(48, 48), Text = "", AutoButtonColor = false, LayoutOrder = 2 }, controls)
+	corner(V.playBtn, 24)
+	accentize(V.playBtn)
+	V.playIcon = newIcon(V.playBtn, { "play-large" }, true, 22, Color3.new(1, 1, 1))
+	V.playIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	V.playIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+	V.playBtn.MouseButton1Click:Connect(musicTogglePlay)
+	local nxt = iconBtn("", { "skip-next-small" }, 40, controls, 40, false)
+	nxt.LayoutOrder = 3
+	nxt.MouseButton1Click:Connect(musicNext)
+
+	V.lift(V.panel, 40)
+	V.lift(V.full, 60)
+	V.body = new("Frame", { Name = "LyricsBody", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Active = true }, V.panelHost)
+	V.stage = new("ScrollingFrame", {
+		Name = "LyricsStage",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 0,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.None,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		ElasticBehavior = Enum.ElasticBehavior.Never,
+		Active = true,
+		Visible = false,
+	}, V.body)
+	V.list = new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, SortOrder = Enum.SortOrder.LayoutOrder }, V.stage)
+	V.pad = padding(V.stage, 60, 0, 60, 0)
+	V.fadeTop = new("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = V.BG, BorderSizePixel = 0, ZIndex = 3, Visible = false }, V.body)
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(0, 1) }, V.fadeTop)
+	V.fadeBottom = new("Frame", {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0),
+		Size = UDim2.new(1, 0, 0, 36),
+		BackgroundColor3 = V.BG,
+		BorderSizePixel = 0,
+		ZIndex = 3,
+		Visible = false,
+	}, V.body)
+	new("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0) }, V.fadeBottom)
+	V.msg = new("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		Size = UDim2.new(0.8, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 15,
+		TextWrapped = true,
+		FontFace = sans(Enum.FontWeight.Medium),
+		ZIndex = 4,
+	}, V.body)
+
+	V.lift(V.body, 60)
+
+	V.stage.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			V.manualUntil = os.clock() + 3.2
+		end
+	end)
+	V.stage.MouseEnter:Connect(function()
+		V.hover = true
+	end)
+	V.stage.MouseLeave:Connect(function()
+		V.hover = false
+	end)
+	track(userInputService.InputChanged:Connect(function(input)
+		if V.hover and input.UserInputType == Enum.UserInputType.MouseWheel then
+			V.manualUntil = os.clock() + 3.2
+		end
+	end))
+end
+
+function V.nudge(delta)
+	local value = math.clamp((tonumber(settings.lyricsOffset) or 0) + delta, -2000, 2000)
+	setSetting("lyricsOffset", value)
+end
+
+function V.updateOffsetLabel()
+	if V.offsetLabel then
+		V.offsetLabel.Text = string.format("Sync %+.1fs", V.offsetSeconds())
+	end
+end
+
+function V.refreshHeader()
+	if not V.panel then
+		return
+	end
+	local title, sub = "Lyrics", ""
+	local trackNow = musicCurrent
+	if trackNow then
+		title = UI.meta.title(trackNow, UI.meta.get(trackNow))
+	end
+	if V.status == "ready" and V.doc then
+		local parts = {}
+		if V.label ~= "" then
+			parts[#parts + 1] = V.label
+		end
+		if V.doc.wordSynced then
+			parts[#parts + 1] = V.doc.estimated and "Word timing estimated" or "Synced by word"
+		elseif V.doc.synced then
+			parts[#parts + 1] = "Words estimated from line timing"
+		else
+			parts[#parts + 1] = "Not synced"
+		end
+		if V.doc.duet then
+			parts[#parts + 1] = "Duet"
+		end
+		sub = table.concat(parts, "  -  ")
+	elseif V.status == "loading" then
+		sub = "Looking for lyrics..."
+	elseif V.status == "none" then
+		sub = "No lyrics found"
+	end
+	V.panelTitle.Text = title
+	V.panelSub.Text = sub
+	V.fullTitle.Text = title
+	V.fullSub.Text = sub
+end
+
+function V.showMessage(text)
+	if not V.msg then
+		return
+	end
+	V.msg.Text = text or ""
+	V.msg.Visible = text ~= nil and text ~= ""
+	V.stage.Visible = false
+	V.fadeTop.Visible = false
+	V.fadeBottom.Visible = false
+end
+
+function V.clearRows()
+	for _, row in ipairs(V.rows) do
+		row:Destroy()
+	end
+	V.rows = {}
+	V.items = {}
+end
+
+function V.makeItems(doc)
+	local list = {}
+	if not doc.synced then
+		for _, line in ipairs(doc.lines) do
+			list[#list + 1] = { line = line, plain = true, rest = line.text == "", voice = 1 }
+		end
+		return list
+	end
+	local lines = doc.lines
+	local total = #lines
+	if lines[1] and lines[1].t >= 4 then
+		list[#list + 1] = { rest = true, dots = true, t = 0.2, e = lines[1].t, voice = 1 }
+	end
+	local maxEnd = 0
+	for i, line in ipairs(lines) do
+		if line.rest then
+			if i < total and line.n - line.t >= 4 then
+				list[#list + 1] = { rest = true, dots = true, t = line.t, e = line.n, voice = 1 }
+			end
+		else
+			list[#list + 1] = {
+				line = line,
+				t = line.t,
+				e = line.e,
+				n = line.n,
+				voice = line.voice,
+				bg = line.bg,
+			}
+			maxEnd = math.max(maxEnd, line.e)
+			local nextLine = lines[i + 1]
+			if nextLine and not nextLine.rest and nextLine.t - maxEnd >= 6 then
+				list[#list + 1] = { rest = true, dots = true, t = maxEnd + 0.4, e = nextLine.t - 0.1, voice = 1 }
+			end
+		end
+	end
+	return list
+end
+
+function V.wordColor(item)
+	if V.doc and V.doc.duet and item.voice == 2 then
+		return accent():Lerp(Color3.new(1, 1, 1), 0.55)
+	end
+	return C.text
+end
+
+function V.alignment(item)
+	if not (V.doc and V.doc.duet) then
+		return Enum.HorizontalAlignment.Left, 0
+	end
+	if item.voice == 2 then
+		return Enum.HorizontalAlignment.Right, 1
+	elseif item.voice == 0 then
+		return Enum.HorizontalAlignment.Center, 0.5
+	end
+	return Enum.HorizontalAlignment.Left, 0
+end
+
+function V.makeRow(item, index, size)
+	local align, anchorX = V.alignment(item)
+	local row = new("Frame", {
+		Name = "Line" .. index,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		LayoutOrder = index,
+	}, V.stage)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Vertical, HorizontalAlignment = align, SortOrder = Enum.SortOrder.LayoutOrder }, row)
+	local gap = item.bg and size * 0.08 or size * 0.3
+	padding(row, gap, size * 0.5, gap, size * 0.5)
+	item.row = row
+	if item.plain then
+		if item.rest then
+			new("Frame", { Size = UDim2.new(1, 0, 0, size * 0.5), BackgroundTransparency = 1 }, row)
+			return row
+		end
+		new("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Text = item.line.text,
+			TextColor3 = C.text,
+			TextTransparency = 0.08,
+			TextSize = math.floor(size * 0.85 + 0.5),
+			TextWrapped = true,
+			FontFace = sans(Enum.FontWeight.Medium),
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
+		return row
+	end
+	if item.dots then
+		local holder = new("Frame", {
+			AnchorPoint = Vector2.new(0, 0),
+			Size = UDim2.new(0, 0, 0, size * 0.8),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 1,
+		}, row)
+		new("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			Padding = UDim.new(0, math.floor(size * 0.45)),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, holder)
+		padding(holder, 0, 0, 0, size * 0.25)
+		item.dotFrames = {}
+		for k = 1, 3 do
+			local dot = new("Frame", {
+				Size = UDim2.fromOffset(math.floor(size * 0.42), math.floor(size * 0.42)),
+				BackgroundColor3 = C.text,
+				BackgroundTransparency = 0.78,
+				BorderSizePixel = 0,
+				LayoutOrder = k,
+			}, holder)
+			corner(dot, 100)
+			item.dotFrames[k] = dot
+		end
+		item.dotScale = new("UIScale", { Scale = 1 }, holder)
+		item.dotState = -1
+		return row
+	end
+
+	local textSize = item.bg and math.max(11, math.floor(size * 0.72 + 0.5)) or size
+	local font = item.bg and sans(Enum.FontWeight.Medium) or sans(Enum.FontWeight.Bold)
+	local color = V.wordColor(item)
+	local wrap = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, row)
+	local flow = new("Frame", {
+		AnchorPoint = Vector2.new(anchorX, 0),
+		Position = UDim2.new(anchorX, 0, 0, 0),
+		Size = UDim2.new(0.9, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+	}, wrap)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = align,
+		Wraps = true,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, flow)
+	item.flow = flow
+	item.textSize = textSize
+	item.words = {}
+	local spacePad = math.floor(textSize * 0.3 + 0.5)
+	for k, word in ipairs(item.line.words) do
+		local holder = new("Frame", {
+			Size = UDim2.new(0, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.XY,
+			BackgroundTransparency = 1,
+			LayoutOrder = k,
+		}, flow)
+		local sizer = new("TextLabel", {
+			Size = UDim2.new(0, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.XY,
+			BackgroundTransparency = 1,
+			Text = word.text,
+			TextTransparency = 1,
+			TextSize = textSize,
+			FontFace = font,
+		}, holder)
+		local label = new("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(0.5, 0, 0.5, 0),
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = word.text,
+			TextColor3 = color,
+			TextTransparency = 0.6,
+			TextSize = textSize,
+			FontFace = font,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, holder)
+		if word.space then
+			padding(sizer, 0, spacePad, 0, 0)
+			padding(label, 0, spacePad, 0, 0)
+		end
+		local gradient = new("UIGradient", { Transparency = V.GRADIENT, Enabled = false }, label)
+		item.words[k] = {
+			t = word.t,
+			e = word.e,
+			holder = holder,
+			sizer = sizer,
+			label = label,
+			gradient = gradient,
+			ratio = nil,
+			key = nil,
+		}
+	end
+	local hit = new("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 5 }, wrap)
+	hit.MouseButton1Click:Connect(function()
+		V.seek(item)
+	end)
+	item.scale = new("UIScale", { Scale = 1 }, flow)
+	return row
+end
+
+function V.seek(item)
+	if not (V.doc and V.doc.synced and item.t) then
+		return
+	end
+	local length = musicSound.TimeLength
+	if length <= 0 then
+		return
+	end
+	musicSound.TimePosition = math.clamp(item.t - V.offsetSeconds(), 0, length)
+	V.manualUntil = 0
+end
+
+function V.build()
+	V.buildToken += 1
+	local token = V.buildToken
+	V.clearRows()
+	V.status = "building"
+	V.cur = 0
+	local doc = V.doc
+	if not doc then
+		return
+	end
+	local size = V.baseSize()
+	V.builtSize = size
+	local items = V.makeItems(doc)
+	V.items = items
+	V.showMessage("")
+	for index, item in ipairs(items) do
+		local ok = pcall(function()
+			V.rows[#V.rows + 1] = V.makeRow(item, index, size)
+			V.lift(item.row, 60)
+		end)
+		if not ok then
+			item.broken = true
+		end
+		if index % 12 == 0 then
+			task.wait()
+			if token ~= V.buildToken then
+				return
+			end
+		end
+	end
+	if token ~= V.buildToken then
+		return
+	end
+	V.stage.Visible = true
+	V.fadeTop.Visible = doc.synced
+	V.fadeBottom.Visible = doc.synced
+	V.fadeTop.BackgroundColor3 = V.mode == "full" and V.FULL_BG or V.BG
+	V.fadeBottom.BackgroundColor3 = V.fadeTop.BackgroundColor3
+	V.msg.Visible = false
+	V.snap = 4
+	V.padHeight = -1
+	V.stage.CanvasPosition = Vector2.new(0, 0)
+	V.scrollY = 0
+	V.status = "ready"
+	V.refreshHeader()
+end
+
+V.rebuildToken = 0
+function V.rebuildSoon()
+	V.rebuildToken += 1
+	local token = V.rebuildToken
+	task.delay(0.45, function()
+		if token == V.rebuildToken and V.mode and V.doc and (V.status == "ready" or V.status == "building") and V.baseSize() ~= V.builtSize then
+			task.spawn(V.build)
+		end
+	end)
+end
+
+function V.finishLoad(token, path, doc, label)
+	if token ~= V.token then
+		return
+	end
+	if not doc then
+		V.status = "none"
+		V.doc = nil
+		V.showMessage("No lyrics found for this song.\nPut a .lrc or .ttml file next to it, or turn on online lookup in Settings.")
+		V.refreshHeader()
+		return
+	end
+	V.doc = doc
+	V.label = label or ""
+	if V.cacheCount >= 8 then
+		V.cache, V.cacheCount = {}, 0
+	end
+	if not V.cache[path] then
+		V.cacheCount += 1
+	end
+	V.cache[path] = { doc = doc, label = V.label }
+	V.build()
+end
+
+function V.load(trackNow)
+	V.token += 1
+	local token = V.token
+	V.buildToken += 1
+	V.trackPath = trackNow.path
+	V.doc = nil
+	V.clearRows()
+	local cached = V.cache[trackNow.path]
+	if cached then
+		V.finishLoad(token, trackNow.path, cached.doc, cached.label)
+		return
+	end
+	V.status = "loading"
+	V.showMessage("Looking for lyrics...")
+	V.refreshHeader()
+	task.spawn(function()
+		local ok, doc, label = pcall(UI.lyrics.resolve, trackNow, function()
+			return token ~= V.token or not V.mode
+		end)
+		if token ~= V.token then
+			return
+		end
+		if not V.mode then
+			return
+		end
+		if not ok then
+			doc, label = nil, nil
+		end
+		V.finishLoad(token, trackNow.path, doc, label)
+	end)
+end
+
+function V.setMode(mode)
+	V.ensureUI()
+	local before = V.mode
+	V.mode = mode
+	if mode == nil then
+		V.panel.Visible = false
+		V.full.Visible = false
+		return
+	end
+	V.panel.Visible = mode == "panel"
+	V.full.Visible = mode == "full" and UI.content.Visible
+	V.body.Parent = mode == "full" and V.fullHost or V.panelHost
+	V.fadeTop.BackgroundColor3 = mode == "full" and V.FULL_BG or V.BG
+	V.fadeBottom.BackgroundColor3 = V.fadeTop.BackgroundColor3
+	V.updateOffsetLabel()
+	V.padHeight = -1
+	if before ~= nil and before ~= mode and V.doc and V.status == "ready" and V.baseSize() ~= V.builtSize then
+		task.spawn(V.build)
+	end
+end
+
+function V.open(mode)
+	V.setMode(mode or "panel")
+	if not musicCurrent then
+		V.status = "idle"
+		V.trackPath = nil
+		V.showMessage("Play a song to see its lyrics.")
+		V.refreshHeader()
+		return
+	end
+	if V.trackPath ~= musicCurrent.path or V.status == "none" or V.status == "idle" then
+		V.load(musicCurrent)
+	elseif V.status == "ready" then
+		if V.baseSize() ~= V.builtSize then
+			task.spawn(V.build)
+		else
+			V.snap = 4
+		end
+		V.refreshHeader()
+	end
+end
+
+function V.close()
+	if not V.mode then
+		return
+	end
+	V.setMode(nil)
+	V.token += 1
+	if V.status ~= "ready" then
+		V.buildToken += 1
+		V.status = "idle"
+		V.trackPath = nil
+	end
+end
+
+function V.toggle()
+	if V.mode then
+		V.close()
+	else
+		V.open("panel")
+	end
+end
+
+function V.targetFor(item)
+	local row = item.row
+	if not row or not V.stage then
+		return nil
+	end
+	local scale = math.max(UI.scaleValue or 1, 0.05)
+	local rowY = row.AbsolutePosition.Y - V.stage.AbsolutePosition.Y + V.stage.CanvasPosition.Y * scale
+	return (rowY + row.AbsoluteSize.Y / 2 - V.stage.AbsoluteSize.Y / 2) / scale
+end
+
+function V.tint(item, level, dclass)
+	local base
+	if level == "past" then
+		base = 0.55 + math.min(dclass, 4) * 0.07
+	elseif level == "future" then
+		base = V.DIM + math.min(math.max(dclass - 1, 0), 4) * 0.08
+	else
+		base = 0.08
+	end
+	if item.bg then
+		base = math.min(base + 0.14, 0.92)
+	end
+	return base
+end
+
+function V.applyStatic(item, level, dclass, fade)
+	local tt = V.tint(item, level, dclass)
+	if fade and fade > 0 then
+		tt = tt * (1 - fade)
+	end
+	if item.plain then
+		return
+	end
+	if item.dots then
+		return
+	end
+	for _, w in ipairs(item.words) do
+		if w.gradient.Enabled then
+			w.gradient.Enabled = false
+		end
+		if w.label.TextTransparency ~= tt then
+			w.label.TextTransparency = tt
+		end
+		if w.dy and w.dy ~= 0 then
+			w.dy = 0
+			w.label.Position = UDim2.new(0.5, 0, 0.5, 0)
+		end
+		if w.us and w.us.Scale ~= 1 then
+			w.us.Scale = 1
+		end
+		w.key = nil
+	end
+	if item.scale and item.scale.Scale ~= 1 then
+		item.scale.Scale = 1
+	end
+end
+
+function V.updateActive(item, now, animated)
+	local size = item.textSize
+	local sinceEnter = os.clock() - (item.enterAt or 0)
+	local pulse = 1
+	if animated then
+		local progress = math.clamp((now - item.t) / 0.35, 0, 1)
+		pulse = 1 + 0.035 * math.sin(math.pi * progress * 0.5)
+	end
+	if item.scale and math.abs(item.scale.Scale - pulse) > 0.002 then
+		item.scale.Scale = pulse
+	end
+	for k, w in ipairs(item.words) do
+		local p
+		if now >= w.e then
+			p = 1
+		elseif now <= w.t then
+			p = 0
+		else
+			p = (now - w.t) / math.max(w.e - w.t, 0.05)
+		end
+		local q = math.floor(p * 60 + 0.5)
+		local y = 0
+		local grow = 1
+		if animated then
+			if p > 0 and p < 1 then
+				local wave = math.sin(math.pi * p)
+				y = y - size * 0.1 * wave
+				grow = 1 + 0.05 * wave
+			end
+			local age = sinceEnter - (k - 1) * 0.04
+			if age < 0.4 then
+				local ep = math.clamp(age / 0.4, 0, 1)
+				local ease = 1 - (1 - ep) ^ 3
+				y = y + (1 - ease) * size * 0.42
+			end
+		end
+		local key = q * 1000 + math.floor(y * 4 + 0.5) * 3 + math.floor((grow - 1) * 200)
+		if w.key ~= key then
+			w.key = key
+			if not w.gradient.Enabled then
+				w.gradient.Enabled = true
+			end
+			if w.label.TextTransparency ~= 0 then
+				w.label.TextTransparency = 0
+			end
+			if not w.ratio then
+				local full = w.holder.AbsoluteSize.X
+				local text = w.sizer.TextBounds.X
+				w.ratio = (full > 0 and text > 0) and math.clamp(text / full, 0.4, 1) or 1
+			end
+			w.gradient.Offset = Vector2.new(-0.05 + p * (w.ratio + 0.1) - 0.5, 0)
+			local yi = math.floor(y * 2 + 0.5) / 2
+			if yi ~= (w.dy or 0) then
+				w.dy = yi
+				w.label.Position = UDim2.new(0.5, 0, 0.5, yi)
+			end
+			if grow ~= 1 or w.us then
+				if not w.us then
+					w.us = new("UIScale", { Scale = 1 }, w.label)
+				end
+				w.us.Scale = grow
+			end
+		end
+	end
+end
+
+function V.updateDots(item, now, active)
+	local state
+	local p = 0
+	if active then
+		p = math.clamp((now - item.t) / math.max(item.e - item.t, 0.1), 0, 1)
+		state = math.floor(p * 90)
+	else
+		state = now < item.t and -1 or -2
+	end
+	local breath = 1
+	if active then
+		breath = 1 + 0.08 * math.sin(os.clock() * 3.2)
+		local left = item.e - now
+		if left < 0.5 then
+			breath = breath * (0.65 + 0.35 * math.max(left, 0) / 0.5)
+		end
+	end
+	if item.dotScale and math.abs(item.dotScale.Scale - breath) > 0.004 then
+		item.dotScale.Scale = breath
+	end
+	if item.dotState == state then
+		return
+	end
+	item.dotState = state
+	for k, dot in ipairs(item.dotFrames) do
+		local lit = active and math.clamp(p * 3 - (k - 1), 0, 1) or 0
+		dot.BackgroundTransparency = 0.8 - 0.78 * lit
+	end
+end
+
+function V.step(dt)
+	if V.full then
+		local show = V.mode == "full" and UI.content.Visible
+		if V.full.Visible ~= show then
+			V.full.Visible = show
+		end
+	end
+	if not V.mode or not UI.content.Visible then
+		return
+	end
+	if V.mode == "panel" and not UI.musicPage.Visible then
+		return
+	end
+	if musicCurrent then
+		if V.trackPath ~= musicCurrent.path then
+			V.load(musicCurrent)
+			return
+		end
+	elseif V.trackPath ~= nil then
+		V.token += 1
+		V.buildToken += 1
+		V.trackPath, V.doc, V.status = nil, nil, "idle"
+		V.clearRows()
+		V.showMessage("Play a song to see its lyrics.")
+		V.refreshHeader()
+		return
+	end
+	if V.mode == "full" then
+		if not V.fullSeek.dragging then
+			local length = musicSound.TimeLength
+			V.fullSeek.set(length > 0 and musicSound.TimePosition / length or 0)
+			V.fullCur.Text = fmtTime(musicSound.TimePosition)
+		end
+		V.fullTotal.Text = fmtTime(musicSound.TimeLength)
+		local icon = musicSound.IsPlaying and "pause-large" or "play-large"
+		if V.playIcon.Text ~= icon then
+			V.playIcon.Text = icon
+		end
+	end
+	if V.status ~= "ready" or not V.doc then
+		return
+	end
+	local items = V.items
+	local count = #items
+	if count == 0 then
+		return
+	end
+	local stage = V.stage
+	local height = stage.AbsoluteSize.Y / math.max(UI.scaleValue or 1, 0.05)
+	if math.abs(height - V.padHeight) > 2 then
+		V.padHeight = height
+		local half = math.max(30, math.floor(height / 2))
+		V.pad.PaddingTop = UDim.new(0, half)
+		V.pad.PaddingBottom = UDim.new(0, half)
+		V.canvasY = nil
+		V.snap = math.max(V.snap, 3)
+	end
+	local content = V.list.AbsoluteContentSize
+	local contentY = type(content.Y) == "number" and content.Y or 0
+	if contentY > 0 and math.abs(contentY - (V.canvasY or 0)) > 1 then
+		V.canvasY = contentY
+		stage.CanvasSize = UDim2.new(0, 0, 0, math.ceil(contentY / math.max(UI.scaleValue or 1, 0.05) + V.pad.PaddingTop.Offset + V.pad.PaddingBottom.Offset) + 4)
+	end
+	if not V.doc.synced then
+		return
+	end
+
+	local now = V.now()
+	local animated = V.animOn()
+	local cur = 0
+	for i = 1, count do
+		local item = items[i]
+		if item.t > now then
+			break
+		end
+		if not item.bg then
+			cur = i
+		end
+	end
+	local changed = cur ~= V.cur
+	for i = 1, count do
+		local item = items[i]
+		if not item.broken then
+			local active = item.t <= now and (now < item.e + 0.35 or i == cur)
+			if item.dots then
+				active = item.t <= now and now < item.e
+				V.updateDots(item, now, active)
+			elseif active then
+				if item.mode ~= "active" then
+					item.mode = "active"
+					item.enterAt = os.clock()
+					item.fade = 0
+					item.restKey = nil
+				end
+				V.updateActive(item, now, animated)
+			else
+				local level = now < item.t and "future" or "past"
+				local dclass = math.abs(i - cur)
+				if item.mode == "active" then
+					item.mode = level
+					item.fade = (level == "past" and animated and now - item.e < 1) and 1 or 0
+					item.restKey = nil
+				elseif item.mode ~= level then
+					item.mode = level
+					item.fade = 0
+					item.restKey = nil
+				end
+				if item.fade and item.fade > 0 then
+					item.fade = math.max(0, item.fade - dt * 5)
+					V.applyStatic(item, level, dclass, item.fade)
+					item.restKey = nil
+				else
+					local key = (level == "past" and 10 or 20) + math.min(dclass, 5)
+					if item.restKey ~= key then
+						item.restKey = key
+						V.applyStatic(item, level, dclass, 0)
+					end
+				end
+			end
+		end
+	end
+	V.cur = cur
+
+	local clock = os.clock()
+	local manual = clock < V.manualUntil
+	if manual then
+		V.wasManual = true
+		return
+	end
+	if V.wasManual then
+		V.wasManual = false
+		V.scrollY = stage.CanvasPosition.Y
+	end
+	local focus = items[cur]
+	if cur == 0 then
+		focus = items[1]
+	end
+	if not focus then
+		return
+	end
+	local target = V.targetFor(focus)
+	if not target then
+		return
+	end
+	if V.snap > 0 then
+		V.snap -= 1
+		V.scrollY = target
+	else
+		local rate = animated and 9 or 22
+		V.scrollY = V.scrollY + (target - V.scrollY) * (1 - math.exp(-dt * rate))
+	end
+	if math.abs(stage.CanvasPosition.Y - V.scrollY) > 0.25 then
+		stage.CanvasPosition = Vector2.new(0, V.scrollY)
+	end
+end
+
+function V.resetStates()
+	for _, item in ipairs(V.items) do
+		item.mode, item.restKey, item.fade = nil, nil, nil
+		for _, w in ipairs(item.words or {}) do
+			w.key = nil
+		end
+	end
+end
+
+do
+	local lyricsBtn = iconBtn("", { "four-bars-horizontal-left-aligned", "music-note" }, 36, UI.musicPanel, 36, false)
+	lyricsBtn.Position = UDim2.new(0, 278, 0, 130)
+	lyricsBtn.Visible = musicCurrent ~= nil
+	lyricsBtn.MouseButton1Click:Connect(V.toggle)
+	V.btn = lyricsBtn
+end
+
+track(runService.Heartbeat:Connect(function(dt)
+	if V.mode or V.full then
+		V.step(dt)
+	end
+end))
+
+bind("lyricsSize", function()
+	if V.mode and V.doc then
+		V.rebuildSoon()
+	end
+end, true)
+bind("lyricsOffset", function()
+	V.updateOffsetLabel()
+end, true)
+bind("lyricsAnim", function()
+	V.resetStates()
+end, true)
+onCleanup(function()
+	V.buildToken += 1
+	V.token += 1
+	V.mode = nil
+end)
+
+UI.consolePage = new("Frame", { Name = "ConsolePage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+UI.consoleBar = new("Frame", { Size = UDim2.new(1, -48, 0, 32), Position = UDim2.new(0, 24, 0, 16), BackgroundTransparency = 1 }, UI.consolePage)
+new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, UI.consoleBar)
+UI.consoleClearBtn = iconBtn("Clear", { "trash-can" }, 96, UI.consoleBar, 32, false)
+UI.consoleCopyBtn = iconBtn("Copy", { "two-stacked-squares" }, 96, UI.consoleBar, 32, false)
+
+do
+	local ROW_BUFFER = 6
+	local MAX_ROWS = 50000
+	local MAX_CHARS = 100000
+	local PAD = 8
+	local STAMP_COLOR = "#6B6B78"
+	local logColors = {
+		[Enum.MessageType.MessageOutput] = Color3.fromHex("#E6E6E6"),
+		[Enum.MessageType.MessageInfo] = Color3.fromHex("#61AFEF"),
+		[Enum.MessageType.MessageWarning] = Color3.fromHex("#E5C07B"),
+		[Enum.MessageType.MessageError] = Color3.fromHex("#E06C75"),
+	}
+	local defaultColor = Color3.fromHex("#E6E6E6")
+	local view = { rowH = 17, charW = 8, cols = 80, entries = {}, rowText = {}, rowKind = {}, rows = 0, pool = {}, poolRow = {}, poolSize = 0, canvasH = 16, stick = true, resizeToken = 0 }
+	local dirty = false
+
+	UI.consoleScroll = new("ScrollingFrame", {
+		Name = "ConsoleOutput",
+		Position = UDim2.new(0, 24, 0, 60),
+		Size = UDim2.new(1, -48, 1, -84),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.6,
+		ScrollBarThickness = 4,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		AutomaticCanvasSize = Enum.AutomaticSize.None,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, UI.consolePage)
+	corner(UI.consoleScroll, 8)
+	UI.consoleJump = iconBtn("", { "arrow-down-to-line" }, 34, UI.consolePage, 34, true)
+	UI.consoleJump.Position = UDim2.new(1, -70, 1, -68)
+	UI.consoleJump.Visible = false
+
+	local function num(value, fallback)
+		return type(value) == "number" and value or fallback
+	end
+
+	local function fontSize()
+		return math.clamp(math.floor(num(settings.consoleFontSize, 13)), 9, 24)
+	end
+
+	local function viewSize()
+		local size = UI.consoleScroll.AbsoluteSize
+		local scale = UI.scaleValue or 1
+		local w, h = num(size.X, 700) / scale, num(size.Y, 320) / scale
+		if w < 120 then
+			w = 700
+		end
+		if h < 40 then
+			h = 320
+		end
+		return w, h
+	end
+
+	local function calcCols()
+		local width = viewSize()
+		return math.max(20, math.floor((width - PAD * 2 - 8) / view.charW) - 1)
+	end
+
+	local function cleanText(text)
+		text = tostring(text):gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\t", "    "):gsub("[%c]", function(c)
+			return c == "\n" and c or ""
+		end)
+		text = text:gsub("\n+$", "")
+		if not utf8.len(text) then
+			text = text:gsub("[\128-\255]", "?")
+		end
+		local cut = utf8.offset(text, MAX_CHARS + 1)
+		if cut then
+			text = text:sub(1, cut - 1) .. "..."
+		end
+		return text
+	end
+
+	local function addRow(kind, text)
+		local n = view.rows + 1
+		view.rows = n
+		view.rowText[n] = text
+		view.rowKind[n] = kind
+	end
+
+	local function wrapEntry(entry)
+		entry[4] = view.rows + 1
+		local kind, text, stamp = entry[1], entry[2], entry[3]
+		local indent = string.rep(" ", #stamp + 1)
+		local cols = math.max(10, view.cols - #stamp - 1)
+		local first = true
+		for line in (text .. "\n"):gmatch("(.-)\n") do
+			local pos, total = 1, #line
+			repeat
+				local nextPos = utf8.offset(line, cols + 1, pos)
+				local piece
+				if not nextPos or nextPos > total then
+					piece = line:sub(pos)
+					pos = total + 1
+				else
+					piece = line:sub(pos, nextPos - 1)
+					pos = nextPos
+				end
+				if first then
+					addRow(kind, '<font color="' .. STAMP_COLOR .. '">' .. stamp .. "</font> " .. esc(piece))
+					first = false
+				else
+					addRow(kind, indent .. esc(piece))
+				end
+			until pos > total
+		end
+	end
+
+	local function resetPool()
+		view.poolRow = {}
+		for i = 1, view.poolSize do
+			local lbl = view.pool[i]
+			if lbl then
+				lbl.Visible = false
+			end
+		end
+	end
+
+	local function rebuildRows()
+		view.rows = 0
+		view.rowText, view.rowKind = {}, {}
+		for _, e in ipairs(view.entries) do
+			wrapEntry(e)
+		end
+		resetPool()
+	end
+
+	local function poolLabel(i)
+		local lbl = view.pool[i]
+		if not lbl then
+			lbl = new("TextLabel", {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, -PAD * 2, 0, view.rowH),
+				Text = "",
+				TextColor3 = defaultColor,
+				TextSize = fontSize(),
+				FontFace = MONO,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextYAlignment = Enum.TextYAlignment.Center,
+				TextWrapped = false,
+				RichText = true,
+				Visible = false,
+			}, UI.consoleScroll)
+			view.pool[i] = lbl
+		end
+		return lbl
+	end
+
+	local function atBottom()
+		local _, viewH = viewSize()
+		return num(UI.consoleScroll.CanvasPosition.Y, 0) >= view.canvasH - viewH - view.rowH * 1.5
+	end
+
+	local function updateJump()
+		UI.consoleJump.Visible = UI.consolePage.Visible and view.rows > 0 and not atBottom()
+	end
+
+	local function render()
+		local _, viewH = viewSize()
+		local rowH = view.rowH
+		local top = num(UI.consoleScroll.CanvasPosition.Y, 0)
+		local visibleRows = math.ceil(viewH / rowH) + 1
+		local first = math.max(1, math.floor((top - PAD) / rowH) + 1 - ROW_BUFFER)
+		local last = math.min(view.rows, first + visibleRows + ROW_BUFFER * 2)
+		local wanted = visibleRows + ROW_BUFFER * 2 + 2
+		if wanted > view.poolSize then
+			view.poolSize = wanted
+			view.poolRow = {}
+		end
+		local size = view.poolSize
+		for i = 1, size do
+			local lbl = view.pool[i]
+			local r = view.poolRow[i]
+			if lbl and r and (r < first or r > last) then
+				lbl.Visible = false
+				view.poolRow[i] = nil
+			end
+		end
+		for r = first, last do
+			local i = (r - 1) % size + 1
+			local lbl = poolLabel(i)
+			if view.poolRow[i] ~= r then
+				view.poolRow[i] = r
+				lbl.Text = view.rowText[r]
+				lbl.TextColor3 = logColors[view.rowKind[r]] or defaultColor
+				lbl.Position = UDim2.new(0, PAD, 0, PAD + (r - 1) * rowH)
+				lbl.Visible = true
+			end
+		end
+	end
+
+	local function setCanvas()
+		view.canvasH = view.rows * view.rowH + PAD * 2
+		UI.consoleScroll.CanvasSize = UDim2.new(0, 0, 0, view.canvasH)
+	end
+
+	local function scrollToBottom()
+		local _, viewH = viewSize()
+		UI.consoleScroll.CanvasPosition = Vector2.new(0, math.max(0, view.canvasH - viewH))
+	end
+
+	local function dropOldest(count)
+		local entries = view.entries
+		local total = #entries
+		count = math.min(count, total)
+		if count <= 0 then
+			return
+		end
+		table.move(entries, count + 1, total, 1)
+		for i = total - count + 1, total do
+			entries[i] = nil
+		end
+		rebuildRows()
+	end
+
+	local function enforceLimits()
+		local max = math.max(50, num(settings.consoleMax, 300))
+		local count = #view.entries
+		if count > max + math.max(50, math.floor(max * 0.1)) then
+			dropOldest(count - max)
+		end
+		local guard = 0
+		while view.rows > MAX_ROWS and #view.entries > 1 and guard < 8 do
+			dropOldest(math.max(1, math.floor(#view.entries * 0.2)))
+			guard = guard + 1
+		end
+	end
+
+	local function flush()
+		dirty = false
+		local follow = view.stick or (settings.consoleAutoscroll and atBottom())
+		view.stick = false
+		local rowsBefore = view.rows
+		enforceLimits()
+		local removed = rowsBefore - view.rows
+		local top = num(UI.consoleScroll.CanvasPosition.Y, 0)
+		setCanvas()
+		if removed > 0 and not follow then
+			UI.consoleScroll.CanvasPosition = Vector2.new(0, math.max(0, top - removed * view.rowH))
+		end
+		render()
+		if follow then
+			task.defer(function()
+				scrollToBottom()
+				render()
+				updateJump()
+			end)
+		end
+		updateJump()
+	end
+
+	local function pushLog(msg, mtype)
+		local entry = { mtype, cleanText(msg), os.date("%H:%M:%S"), 1 }
+		local entries = view.entries
+		entries[#entries + 1] = entry
+		wrapEntry(entry)
+		if not dirty then
+			dirty = true
+			task.delay(0.1, function()
+				if running then
+					flush()
+				end
+			end)
+		end
+	end
+
+	local function clearLog()
+		view.entries = {}
+		view.stick = true
+		rebuildRows()
+		flush()
+	end
+
+	local function rawText()
+		local out = {}
+		for i, e in ipairs(view.entries) do
+			out[i] = "[" .. e[3] .. "] " .. e[2]
+		end
+		return table.concat(out, "\n")
+	end
+
+	local function relayout(force)
+		local cols = calcCols()
+		local follow = atBottom()
+		if cols ~= view.cols or force then
+			view.cols = cols
+			rebuildRows()
+		end
+		setCanvas()
+		render()
+		if follow then
+			task.defer(function()
+				scrollToBottom()
+				render()
+				updateJump()
+			end)
+		end
+		updateJump()
+	end
+
+	local function applyFontSetting()
+		local size = fontSize()
+		view.rowH = size + 4
+		view.charW = size * 0.6
+		for i = 1, view.poolSize do
+			local lbl = view.pool[i]
+			if lbl then
+				lbl.TextSize = size
+				lbl.Size = UDim2.new(1, -PAD * 2, 0, view.rowH)
+			end
+		end
+		view.cols = calcCols()
+		rebuildRows()
+		setCanvas()
+		render()
+		task.spawn(function()
+			local measured
+			pcall(function()
+				local p = Instance.new("GetTextBoundsParams")
+				p.Font = MONO
+				p.Size = size
+				p.Width = 100000
+				p.Text = string.rep("M", 100)
+				measured = textService:GetTextBoundsAsync(p).X / 100
+			end)
+			if fontSize() == size and type(measured) == "number" and measured >= 3 and math.abs(measured - view.charW) > 0.05 then
+				view.charW = measured
+				relayout(true)
+			end
+		end)
+	end
+
+	pcall(function()
+		local history = logService:GetLogHistory()
+		for i = math.max(1, #history - 200), #history do
+			pushLog(history[i].message, history[i].messageType)
+		end
+	end)
+	track(logService.MessageOut:Connect(function(msg, mtype)
+		if settings.consoleCapture then
+			pcall(pushLog, msg, mtype)
+		end
+	end))
+
+	UI.consoleClearBtn.MouseButton1Click:Connect(clearLog)
+	UI.consoleCopyBtn.MouseButton1Click:Connect(function()
+		if setclipboard then
+			pcall(setclipboard, rawText())
+			notify("Console copied", "success")
+		else
+			notify("setclipboard is not supported by your executor", "warn")
+		end
+	end)
+	UI.consoleJump.MouseButton1Click:Connect(function()
+		scrollToBottom()
+		render()
+		updateJump()
+	end)
+	UI.consoleScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		render()
+		updateJump()
+	end)
+	UI.consoleScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		view.resizeToken = view.resizeToken + 1
+		local mine = view.resizeToken
+		task.delay(0.15, function()
+			if running and mine == view.resizeToken then
+				relayout()
+			end
+		end)
+	end)
+	UI.consolePage:GetPropertyChangedSignal("Visible"):Connect(function()
+		if UI.consolePage.Visible then
+			task.defer(function()
+				relayout()
+			end)
+		else
+			UI.consoleJump.Visible = false
+		end
+	end)
+
+	UI.consoleApi = { push = pushLog, clear = clearLog, flush = flush, relayout = relayout, view = view, text = rawText }
+
+	bind("consoleFontSize", applyFontSetting)
+	bind("consoleMax", function()
+		flush()
+	end, true)
+	bind("consoleAutoscroll", function(on)
+		if on then
+			view.stick = false
+		end
+	end, true)
+end
+
+do
+	local TERMINAL_JS_URL = ""
+	local TERM_DIR = ROOT .. "/Terminal"
+	local TERMINAL_JS = table.concat({
+		"'use strict';",
+		"",
+		"const http = require('http');",
+		"const crypto = require('crypto');",
+		"const path = require('path');",
+		"const readline = require('readline');",
+		"const fs = require('fs');",
+		"const os = require('os');",
+		"const { spawn } = require('child_process');",
+		"",
+		"const HOST = '127.0.0.1';",
+		"const argv = process.argv.slice(2);",
+		"",
+		"function argValue(name) {",
+		"\tconst i = argv.indexOf(name);",
+		"\treturn i >= 0 ? argv[i + 1] : undefined;",
+		"}",
+		"",
+		"const PORT = Number(argValue('--port') || process.env.PORT || 8765);",
+		"const AUTO_APPROVE = argv.includes('--auto-approve') || process.env.BASES_AUTO_APPROVE === '1';",
+		"const SHELL = process.env.BASES_SHELL || (process.platform === 'win32' ? 'powershell.exe' : 'pwsh');",
+		"const IS_PS = /pwsh|powershell/i.test(path.basename(SHELL));",
+		"const MAX_MESSAGE = 1024 * 1024;",
+		"const MAX_COMMAND = 20000;",
+		"const MAX_LINE = 4000;",
+		"const MAX_LINES_PER_JOB = 20000;",
+		"const YTDLP = process.env.BASES_YTDLP || 'yt-dlp';",
+		"const FFMPEG = process.env.BASES_FFMPEG || 'ffmpeg';",
+		"const WINGET = process.env.BASES_WINGET || 'winget';",
+		"const SEARCH_BUDGET_MS = Number(process.env.BASES_SEARCH_MS || 25000);",
+		"const SEARCH_MAX_DEPTH = 7;",
+		"const extraRoots = [];",
+		"for (let i = 0; i < argv.length; i++) {",
+		"\tif (argv[i] === '--search' && argv[i + 1]) {",
+		"\t\textraRoots.push(argv[i + 1]);",
+		"\t}",
+		"}",
+		"for (const p of String(process.env.BASES_SEARCH || '').split(path.delimiter)) {",
+		"\tif (p) {",
+		"\t\textraRoots.push(p);",
+		"\t}",
+		"}",
+		"const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';",
+		"",
+		"function makeToken() {",
+		"\tlet token = '';",
+		"\tfor (let i = 0; i < 8; i++) {",
+		"\t\ttoken = token + ALPHABET[crypto.randomInt(ALPHABET.length)];",
+		"\t}",
+		"\treturn token;",
+		"}",
+		"",
+		"const TOKEN = process.env.BASES_TOKEN || makeToken();",
+		"const tty = process.stdout.isTTY;",
+		"const paint = (code, text) => (tty ? '\\x1b[' + code + 'm' + text + '\\x1b[0m' : text);",
+		"",
+		"function log(text) {",
+		"\tconsole.log(text);",
+		"}",
+		"",
+		"function safeEqual(a, b) {",
+		"\tconst x = Buffer.from(a);",
+		"\tconst y = Buffer.from(b);",
+		"\treturn x.length === y.length && crypto.timingSafeEqual(x, y);",
+		"}",
+		"",
+		"function encodeFrame(opcode, payload) {",
+		"\tconst body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');",
+		"\tconst len = body.length;",
+		"\tlet header;",
+		"\tif (len < 126) {",
+		"\t\theader = Buffer.from([0x80 | opcode, len]);",
+		"\t} else if (len < 65536) {",
+		"\t\theader = Buffer.alloc(4);",
+		"\t\theader[0] = 0x80 | opcode;",
+		"\t\theader[1] = 126;",
+		"\t\theader.writeUInt16BE(len, 2);",
+		"\t} else {",
+		"\t\theader = Buffer.alloc(10);",
+		"\t\theader[0] = 0x80 | opcode;",
+		"\t\theader[1] = 127;",
+		"\t\theader.writeBigUInt64BE(BigInt(len), 2);",
+		"\t}",
+		"\treturn Buffer.concat([header, body]);",
+		"}",
+		"",
+		"class Connection {",
+		"\tconstructor(socket) {",
+		"\t\tthis.socket = socket;",
+		"\t\tthis.buffer = Buffer.alloc(0);",
+		"\t\tthis.fragments = [];",
+		"\t\tthis.fragmentOpcode = 0;",
+		"\t\tthis.fragmentSize = 0;",
+		"\t\tthis.closed = false;",
+		"\t\tthis.onMessage = () => {};",
+		"\t\tthis.onClose = () => {};",
+		"\t\tsocket.on('data', (chunk) => this.onData(chunk));",
+		"\t\tsocket.on('close', () => this.finish());",
+		"\t\tsocket.on('error', () => this.finish());",
+		"\t}",
+		"",
+		"\tonData(chunk) {",
+		"\t\tthis.buffer = Buffer.concat([this.buffer, chunk]);",
+		"\t\twhile (!this.closed) {",
+		"\t\t\tconst frame = this.readFrame();",
+		"\t\t\tif (!frame) {",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tthis.handleFrame(frame);",
+		"\t\t}",
+		"\t}",
+		"",
+		"\treadFrame() {",
+		"\t\tconst b = this.buffer;",
+		"\t\tif (b.length < 2) {",
+		"\t\t\treturn null;",
+		"\t\t}",
+		"\t\tconst fin = (b[0] & 0x80) !== 0;",
+		"\t\tconst opcode = b[0] & 0x0f;",
+		"\t\tconst masked = (b[1] & 0x80) !== 0;",
+		"\t\tlet len = b[1] & 0x7f;",
+		"\t\tlet offset = 2;",
+		"\t\tif (len === 126) {",
+		"\t\t\tif (b.length < 4) {",
+		"\t\t\t\treturn null;",
+		"\t\t\t}",
+		"\t\t\tlen = b.readUInt16BE(2);",
+		"\t\t\toffset = 4;",
+		"\t\t} else if (len === 127) {",
+		"\t\t\tif (b.length < 10) {",
+		"\t\t\t\treturn null;",
+		"\t\t\t}",
+		"\t\t\tconst big = b.readBigUInt64BE(2);",
+		"\t\t\tif (big > BigInt(MAX_MESSAGE)) {",
+		"\t\t\t\tthis.close(1009);",
+		"\t\t\t\treturn null;",
+		"\t\t\t}",
+		"\t\t\tlen = Number(big);",
+		"\t\t\toffset = 10;",
+		"\t\t}",
+		"\t\tif (len > MAX_MESSAGE || !masked) {",
+		"\t\t\tthis.close(len > MAX_MESSAGE ? 1009 : 1002);",
+		"\t\t\treturn null;",
+		"\t\t}",
+		"\t\tif (b.length < offset + 4 + len) {",
+		"\t\t\treturn null;",
+		"\t\t}",
+		"\t\tconst mask = b.subarray(offset, offset + 4);",
+		"\t\tconst payload = Buffer.from(b.subarray(offset + 4, offset + 4 + len));",
+		"\t\tfor (let i = 0; i < payload.length; i++) {",
+		"\t\t\tpayload[i] = payload[i] ^ mask[i % 4];",
+		"\t\t}",
+		"\t\tthis.buffer = b.subarray(offset + 4 + len);",
+		"\t\treturn { fin, opcode, payload };",
+		"\t}",
+		"",
+		"\thandleFrame(frame) {",
+		"\t\tconst { fin, opcode, payload } = frame;",
+		"\t\tif (opcode === 0x8) {",
+		"\t\t\tthis.close(1000);",
+		"\t\t} else if (opcode === 0x9) {",
+		"\t\t\tthis.write(encodeFrame(0xa, payload));",
+		"\t\t} else if (opcode === 0x1 || opcode === 0x2 || opcode === 0x0) {",
+		"\t\t\tif (opcode !== 0x0) {",
+		"\t\t\t\tthis.fragments = [];",
+		"\t\t\t\tthis.fragmentSize = 0;",
+		"\t\t\t\tthis.fragmentOpcode = opcode;",
+		"\t\t\t}",
+		"\t\t\tthis.fragments.push(payload);",
+		"\t\t\tthis.fragmentSize = this.fragmentSize + payload.length;",
+		"\t\t\tif (this.fragmentSize > MAX_MESSAGE) {",
+		"\t\t\t\tthis.close(1009);",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tif (fin) {",
+		"\t\t\t\tconst message = Buffer.concat(this.fragments);",
+		"\t\t\t\tconst kind = this.fragmentOpcode;",
+		"\t\t\t\tthis.fragments = [];",
+		"\t\t\t\tthis.fragmentSize = 0;",
+		"\t\t\t\tif (kind === 0x1) {",
+		"\t\t\t\t\tthis.onMessage(message.toString('utf8'));",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t}",
+		"\t}",
+		"",
+		"\twrite(data) {",
+		"\t\tif (!this.closed && this.socket.writable) {",
+		"\t\t\tthis.socket.write(data);",
+		"\t\t}",
+		"\t}",
+		"",
+		"\tsend(text) {",
+		"\t\tthis.write(encodeFrame(0x1, text));",
+		"\t}",
+		"",
+		"\tclose(code) {",
+		"\t\tif (this.closed) {",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tconst body = Buffer.alloc(2);",
+		"\t\tbody.writeUInt16BE(code || 1000, 0);",
+		"\t\tthis.write(encodeFrame(0x8, body));",
+		"\t\tthis.socket.end();",
+		"\t\tthis.finish();",
+		"\t}",
+		"",
+		"\tfinish() {",
+		"\t\tif (this.closed) {",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tthis.closed = true;",
+		"\t\tthis.socket.destroy();",
+		"\t\tthis.onClose();",
+		"\t}",
+		"}",
+		"",
+		"let client = null;",
+		"let failures = 0;",
+		"let lockedUntil = 0;",
+		"let approveAll = AUTO_APPROVE;",
+		"let cwd = process.cwd();",
+		"let locatedRoot = null;",
+		"let locating = false;",
+		"let approveDownloads = false;",
+		"let curDl = null;",
+		"let curInstall = null;",
+		"let toolsOk = false;",
+		"",
+		"function send(message) {",
+		"\tif (client && !client.closed) {",
+		"\t\tclient.send(JSON.stringify(message));",
+		"\t}",
+		"}",
+		"",
+		"const outQueue = [];",
+		"let outTimer = null;",
+		"let jobLines = 0;",
+		"let jobTruncated = false;",
+		"",
+		"function flushOut() {",
+		"\tclearTimeout(outTimer);",
+		"\toutTimer = null;",
+		"\tif (outQueue.length === 0) {",
+		"\t\treturn;",
+		"\t}",
+		"\tsend({ type: 'out', items: outQueue.splice(0, outQueue.length) });",
+		"}",
+		"",
+		"function emit(stream, line, mode) {",
+		"\tconst kind = stream === 'stderr' ? 'err' : 'out';",
+		"\tif (mode === 3) {",
+		"\t\tconst tail = outQueue[outQueue.length - 1];",
+		"\t\tif (tail && tail.s === kind && tail.r === 1) {",
+		"\t\t\ttail.r = 2;",
+		"\t\t} else {",
+		"\t\t\toutQueue.push({ s: kind, t: '', r: 3 });",
+		"\t\t}",
+		"\t} else {",
+		"\t\tconst text = line.length > MAX_LINE ? line.slice(0, MAX_LINE) + '...' : line;",
+		"\t\tif (mode === 1) {",
+		"\t\t\tconst tail = outQueue[outQueue.length - 1];",
+		"\t\t\tif (tail && tail.s === kind && tail.r === 1) {",
+		"\t\t\t\ttail.t = text;",
+		"\t\t\t} else {",
+		"\t\t\t\toutQueue.push({ s: kind, t: text, r: 1 });",
+		"\t\t\t}",
+		"\t\t} else {",
+		"\t\t\tif (jobLines >= MAX_LINES_PER_JOB) {",
+		"\t\t\t\tif (!jobTruncated) {",
+		"\t\t\t\t\tjobTruncated = true;",
+		"\t\t\t\t\toutQueue.push({ s: 'err', t: '[output truncated after ' + MAX_LINES_PER_JOB + ' lines]' });",
+		"\t\t\t\t}",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tjobLines++;",
+		"\t\t\tconst tail = outQueue[outQueue.length - 1];",
+		"\t\t\tif (mode === 2 && tail && tail.s === kind && tail.r === 1) {",
+		"\t\t\t\ttail.t = text;",
+		"\t\t\t\ttail.r = 2;",
+		"\t\t\t} else {",
+		"\t\t\t\tconst item = { s: kind, t: text };",
+		"\t\t\t\tif (mode === 2) {",
+		"\t\t\t\t\titem.r = 2;",
+		"\t\t\t\t}",
+		"\t\t\t\toutQueue.push(item);",
+		"\t\t\t}",
+		"\t\t}",
+		"\t}",
+		"\tif (outQueue.length >= 200) {",
+		"\t\tflushOut();",
+		"\t} else if (!outTimer) {",
+		"\t\toutTimer = setTimeout(flushOut, 40);",
+		"\t}",
+		"}",
+		"",
+		"const ANSI = /\\x1b\\[[0-9;?]*[ -\\/]*[@-~]|\\x1b\\][^\\x07]*\\x07/g;",
+		"",
+		"function decodeXml(text) {",
+		"\treturn text",
+		"\t\t.replace(/_x([0-9A-Fa-f]{4})_/g, (m, hex) => String.fromCharCode(parseInt(hex, 16)))",
+		"\t\t.replace(/&lt;/g, '<')",
+		"\t\t.replace(/&gt;/g, '>')",
+		"\t\t.replace(/&quot;/g, '\"')",
+		"\t\t.replace(/&apos;/g, \"'\")",
+		"\t\t.replace(/&amp;/g, '&');",
+		"}",
+		"",
+		"function cleanErrorText(text) {",
+		"\tif (text.indexOf('#< CLIXML') === -1) {",
+		"\t\treturn text;",
+		"\t}",
+		"\tconst parts = [];",
+		"\tconst re = /<S S=\"Error\">([\\s\\S]*?)<\\/S>/g;",
+		"\tlet m;",
+		"\twhile ((m = re.exec(text)) !== null) {",
+		"\t\tparts.push(decodeXml(m[1]));",
+		"\t}",
+		"\treturn parts.join('');",
+		"}",
+		"",
+		"let shell = null;",
+		"let current = null;",
+		"const buf = { stdout: '', stderr: '' };",
+		"let idleTimer = null;",
+		"const MARK = /<<BASES_DONE:(\\d+):([^\\r\\n]*?)>>/;",
+		"",
+		"const liveOpen = { stdout: false, stderr: false };",
+		"",
+		"function emitLive(stream, text) {",
+		"\tif (text === '') {",
+		"\t\treturn;",
+		"\t}",
+		"\tliveOpen[stream] = true;",
+		"\temit(stream, text, 1);",
+		"}",
+		"",
+		"function emitFinal(stream, text) {",
+		"\tif (liveOpen[stream]) {",
+		"\t\tliveOpen[stream] = false;",
+		"\t\temit(stream, text, text === '' ? 3 : 2);",
+		"\t} else {",
+		"\t\temit(stream, text, 0);",
+		"\t}",
+		"}",
+		"",
+		"function drain(stream, final) {",
+		"\tconst b = buf[stream];",
+		"\tlet pos = 0;",
+		"\tfor (;;) {",
+		"\t\tconst nl = b.indexOf('\\n', pos);",
+		"\t\tconst cr = b.indexOf('\\r', pos);",
+		"\t\tif (nl === -1 && cr === -1) {",
+		"\t\t\tbreak;",
+		"\t\t}",
+		"\t\tif (cr !== -1 && (nl === -1 || cr < nl)) {",
+		"\t\t\tif (b[cr + 1] === '\\n') {",
+		"\t\t\t\temitFinal(stream, b.slice(pos, cr));",
+		"\t\t\t\tpos = cr + 2;",
+		"\t\t\t\tcontinue;",
+		"\t\t\t}",
+		"\t\t\tif (cr + 1 >= b.length && !final) {",
+		"\t\t\t\tbreak;",
+		"\t\t\t}",
+		"\t\t\temitLive(stream, b.slice(pos, cr));",
+		"\t\t\tpos = cr + 1;",
+		"\t\t\tcontinue;",
+		"\t\t}",
+		"\t\temitFinal(stream, b.slice(pos, nl));",
+		"\t\tpos = nl + 1;",
+		"\t}",
+		"\tlet rest = b.slice(pos);",
+		"\tif (final) {",
+		"\t\tif (rest !== '') {",
+		"\t\t\temitFinal(stream, rest.replace(/\\r$/, ''));",
+		"\t\t} else if (liveOpen[stream]) {",
+		"\t\t\temitFinal(stream, '');",
+		"\t\t}",
+		"\t\trest = '';",
+		"\t\tliveOpen[stream] = false;",
+		"\t}",
+		"\tbuf[stream] = rest;",
+		"}",
+		"",
+		"function scheduleIdle() {",
+		"\tclearTimeout(idleTimer);",
+		"\tidleTimer = setTimeout(() => {",
+		"\t\tfor (const stream of ['stdout', 'stderr']) {",
+		"\t\t\tif (buf[stream].length > 0 && buf[stream].indexOf('<<BASES') === -1) {",
+		"\t\t\t\tconst text = buf[stream].replace(/\\r$/, '');",
+		"\t\t\t\tif (liveOpen[stream]) {",
+		"\t\t\t\t\temitLive(stream, text);",
+		"\t\t\t\t} else {",
+		"\t\t\t\t\temit(stream, text, 0);",
+		"\t\t\t\t}",
+		"\t\t\t\tbuf[stream] = '';",
+		"\t\t\t}",
+		"\t\t}",
+		"\t}, 150);",
+		"}",
+		"",
+		"function finishJob(extra) {",
+		"\tif (!current) {",
+		"\t\treturn;",
+		"\t}",
+		"\tconst job = current;",
+		"\tcurrent = null;",
+		"\tclearTimeout(idleTimer);",
+		"\tdrain('stdout', true);",
+		"\tdrain('stderr', true);",
+		"\tflushOut();",
+		"\tsend(Object.assign({ type: 'done', id: job.id, cwd }, extra || {}));",
+		"\tjob.resolve();",
+		"}",
+		"",
+		"function onData(stream, raw) {",
+		"\tif (!current) {",
+		"\t\treturn;",
+		"\t}",
+		"\tlet text = raw.replace(ANSI, '');",
+		"\tif (stream === 'stderr') {",
+		"\t\ttext = cleanErrorText(text);",
+		"\t}",
+		"\tbuf[stream] = buf[stream] + text;",
+		"\tif (stream === 'stdout' && !current.finishing) {",
+		"\t\tconst m = MARK.exec(buf.stdout);",
+		"\t\tif (m && Number(m[1]) === current.id) {",
+		"\t\t\tconst before = buf.stdout.slice(0, m.index);",
+		"\t\t\tbuf.stdout = before;",
+		"\t\t\tcwd = m[2];",
+		"\t\t\tcurrent.finishing = true;",
+		"\t\t\tdrain('stdout', true);",
+		"\t\t\tsetTimeout(() => finishJob(), 40);",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t}",
+		"\tif (current.finishing && stream === 'stdout') {",
+		"\t\tbuf.stdout = '';",
+		"\t\treturn;",
+		"\t}",
+		"\tdrain(stream, false);",
+		"\tscheduleIdle();",
+		"}",
+		"",
+		"function startShell() {",
+		"\tconst args = IS_PS ? ['-NoLogo', '-NoProfile', '-NoExit', '-OutputFormat', 'Text', '-Command', '-'] : [];",
+		"\tconst proc = spawn(SHELL, args, { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });",
+		"\tshell = proc;",
+		"\tproc.stdout.setEncoding('utf8');",
+		"\tproc.stderr.setEncoding('utf8');",
+		"\tproc.stdout.on('data', (d) => onData('stdout', d));",
+		"\tproc.stderr.on('data', (d) => onData('stderr', d));",
+		"\tproc.stdin.on('error', () => {});",
+		"\tproc.on('error', (err) => {",
+		"\t\tlog(paint('31', 'Could not start ' + SHELL + ': ' + err.message));",
+		"\t\tsend({ type: 'info', level: 'error', message: 'Could not start ' + SHELL + ': ' + err.message });",
+		"\t\tif (shell === proc) {",
+		"\t\t\tshell = null;",
+		"\t\t}",
+		"\t\tfinishJob({ exited: true });",
+		"\t});",
+		"\tproc.on('close', () => {",
+		"\t\tif (shell === proc) {",
+		"\t\t\tshell = null;",
+		"\t\t\tif (current) {",
+		"\t\t\t\tsend({ type: 'info', level: 'warn', message: 'The shell exited. A fresh shell will start on the next command.' });",
+		"\t\t\t\tfinishJob({ exited: true });",
+		"\t\t\t}",
+		"\t\t}",
+		"\t});",
+		"\tif (IS_PS) {",
+		"\t\tproc.stdin.write(",
+		"\t\t\t\"try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}\\n\" +",
+		"\t\t\t\t\"$OutputEncoding = [System.Text.Encoding]::UTF8\\n\" +",
+		"\t\t\t\t\"$ProgressPreference = 'SilentlyContinue'\\n\"",
+		"\t\t);",
+		"\t}",
+		"\treturn proc;",
+		"}",
+		"",
+		"function markerCommand(id) {",
+		"\tif (IS_PS) {",
+		"\t\treturn 'Write-Output (\"<<BASES_DONE:' + id + ':\" + (Get-Location).Path + \">>\")';",
+		"\t}",
+		"\treturn 'echo \"<<BASES_DONE:' + id + ':$(pwd)>>\"';",
+		"}",
+		"",
+		"function runJob(job) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tjobLines = 0;",
+		"\t\tjobTruncated = false;",
+		"\t\tbuf.stdout = '';",
+		"\t\tbuf.stderr = '';",
+		"\t\tcurrent = { id: job.id, resolve, finishing: false };",
+		"\t\tconst proc = shell || startShell();",
+		"\t\tproc.stdin.write(job.command + '\\n' + markerCommand(job.id) + '\\n');",
+		"\t});",
+		"}",
+		"",
+		"function killShell() {",
+		"\tconst proc = shell;",
+		"\tshell = null;",
+		"\tif (!proc) {",
+		"\t\treturn;",
+		"\t}",
+		"\tif (process.platform === 'win32') {",
+		"\t\tspawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });",
+		"\t} else {",
+		"\t\tproc.kill('SIGKILL');",
+		"\t}",
+		"}",
+		"",
+		"const queue = [];",
+		"let busy = false;",
+		"let rl = null;",
+		"let pendingAnswer = null;",
+		"",
+		"function getReadline() {",
+		"\tif (!rl) {",
+		"\t\trl = readline.createInterface({ input: process.stdin, output: process.stdout });",
+		"\t\trl.on('close', () => {",
+		"\t\t\tif (pendingAnswer) {",
+		"\t\t\t\tpendingAnswer('n');",
+		"\t\t\t\tpendingAnswer = null;",
+		"\t\t\t}",
+		"\t\t});",
+		"\t}",
+		"\treturn rl;",
+		"}",
+		"",
+		"function ask(title, command, noAlways) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tlog('');",
+		"\t\tlog(paint('33', title));",
+		"\t\tlog(command);",
+		"\t\tpendingAnswer = resolve;",
+		"\t\tconst prompt = noAlways ? 'Allow? [y] yes  [n] deny > ' : 'Allow? [y] once  [a] always this session  [n] deny > ';",
+		"\t\tgetReadline().question(paint('36', prompt), (answer) => {",
+		"\t\t\tpendingAnswer = null;",
+		"\t\t\tconst a = String(answer).trim().toLowerCase();",
+		"\t\t\tresolve(a === 'y' || (a === 'a' && !noAlways) ? a : 'n');",
+		"\t\t});",
+		"\t});",
+		"}",
+		"",
+		"async function pump() {",
+		"\tif (busy || queue.length === 0) {",
+		"\t\treturn;",
+		"\t}",
+		"\tbusy = true;",
+		"\tconst job = queue.shift();",
+		"\ttry {",
+		"\t\tconst isDownload = job.kind === 'download';",
+		"\t\tconst isUpdate = job.kind === 'update';",
+		"\t\tconst isInstall = job.kind === 'install' || isUpdate;",
+		"\t\tlet allowed = true;",
+		"\t\tif (!(approveAll || (isDownload && approveDownloads))) {",
+		"\t\t\tif (isDownload) {",
+		"\t\t\t\tsend({ type: 'dlstatus', id: job.id, stage: 'waiting' });",
+		"\t\t\t} else if (isInstall) {",
+		"\t\t\t\tsend({ type: isUpdate ? 'updstatus' : 'inststatus', id: job.id, stage: 'waiting', text: 'Waiting for your approval in the PowerShell window (y / n)...' });",
+		"\t\t\t} else {",
+		"\t\t\t\tsend({ type: 'pending', id: job.id });",
+		"\t\t\t}",
+		"\t\t\tconst answer = isDownload",
+		"\t\t\t\t? await ask('[Bases] Roblox wants to download audio with yt-dlp:', job.query + '\\n  into: ' + job.dir)",
+		"\t\t\t\t: isUpdate",
+		"\t\t\t\t\t? await ask('[Bases] Roblox wants to update yt-dlp:', 'winget upgrade yt-dlp.yt-dlp (or yt-dlp -U if winget cannot)', true)",
+		"\t\t\t\t\t: isInstall",
+		"\t\t\t\t\t\t? await ask('[Bases] Roblox wants to install the missing tools with winget:', 'yt-dlp.yt-dlp and Gyan.FFmpeg (only the ones that are missing)', true)",
+		"\t\t\t\t\t\t: await ask('[Bases] Roblox wants to run:', job.command);",
+		"\t\t\tif (answer === 'a') {",
+		"\t\t\t\tif (isDownload) {",
+		"\t\t\t\t\tapproveDownloads = true;",
+		"\t\t\t\t\tlog(paint('33', 'Downloads are auto-approved for this session.'));",
+		"\t\t\t\t} else {",
+		"\t\t\t\t\tapproveAll = true;",
+		"\t\t\t\t\tlog(paint('33', 'Auto-approve is on for this session.'));",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t\tallowed = answer === 'y' || answer === 'a';",
+		"\t\t}",
+		"\t\tif (!client || client.closed) {",
+		"\t\t\tallowed = false;",
+		"\t\t}",
+		"\t\tif (allowed && isDownload) {",
+		"\t\t\tlog(paint('90', '> yt-dlp ' + job.query));",
+		"\t\t\tawait runDownload(job);",
+		"\t\t} else if (allowed && isUpdate) {",
+		"\t\t\tlog(paint('90', '> winget upgrade yt-dlp.yt-dlp'));",
+		"\t\t\tawait runUpdate(job);",
+		"\t\t} else if (allowed && isInstall) {",
+		"\t\t\tlog(paint('90', '> winget install yt-dlp.yt-dlp / Gyan.FFmpeg'));",
+		"\t\t\tawait runInstall(job);",
+		"\t\t} else if (allowed) {",
+		"\t\t\tlog(paint('90', '> ' + job.command.split('\\n')[0] + (job.command.indexOf('\\n') >= 0 ? ' ...' : '')));",
+		"\t\t\tawait runJob(job);",
+		"\t\t} else if (isDownload) {",
+		"\t\t\tsend({ type: 'dlerror', id: job.id, message: 'Denied on your PC.' });",
+		"\t\t} else if (isUpdate) {",
+		"\t\t\tsend({ type: 'upderror', id: job.id, message: 'Denied on your PC.' });",
+		"\t\t} else if (isInstall) {",
+		"\t\t\tsend({ type: 'insterror', id: job.id, message: 'Denied on your PC.' });",
+		"\t\t} else {",
+		"\t\t\tsend({ type: 'denied', id: job.id });",
+		"\t\t}",
+		"\t} finally {",
+		"\t\tbusy = false;",
+		"\t}",
+		"\tpump();",
+		"}",
+		"",
+		"function interrupt() {",
+		"\tfor (const job of queue.splice(0, queue.length)) {",
+		"\t\tif (job.kind === 'download') {",
+		"\t\t\tsend({ type: 'dlerror', id: job.id, message: 'Cancelled.' });",
+		"\t\t} else if (job.kind === 'update') {",
+		"\t\t\tsend({ type: 'upderror', id: job.id, message: 'Cancelled.' });",
+		"\t\t} else if (job.kind === 'install') {",
+		"\t\t\tsend({ type: 'insterror', id: job.id, message: 'Cancelled.' });",
+		"\t\t} else {",
+		"\t\t\tsend({ type: 'done', id: job.id, cwd, interrupted: true });",
+		"\t\t}",
+		"\t}",
+		"\tcancelDownload();",
+		"\tif (pendingAnswer) {",
+		"\t\tpendingAnswer('n');",
+		"\t\tpendingAnswer = null;",
+		"\t}",
+		"\tif (current) {",
+		"\t\tkillShell();",
+		"\t\tfinishJob({ interrupted: true });",
+		"\t} else {",
+		"\t\tkillShell();",
+		"\t}",
+		"\tsend({ type: 'info', level: 'info', message: 'Shell stopped. A fresh shell starts on the next command.' });",
+		"}",
+		"",
+		"function handleClientMessage(msg) {",
+		"\tif (msg.type === 'run') {",
+		"\t\tconst id = Number(msg.id);",
+		"\t\tconst command = String(msg.command === undefined ? '' : msg.command);",
+		"\t\tif (!Number.isInteger(id)) {",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (command.trim() === '' || command.length > MAX_COMMAND || command.indexOf('\\0') >= 0) {",
+		"\t\t\tsend({ type: 'done', id, cwd, error: 'Invalid command' });",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tqueue.push({ id, command, kind: 'run' });",
+		"\t\tpump();",
+		"\t} else if (msg.type === 'locate') {",
+		"\t\tstartLocate(msg);",
+		"\t} else if (msg.type === 'download') {",
+		"\t\tstartDownload(msg);",
+		"\t} else if (msg.type === 'update') {",
+		"\t\tconst id = Number(msg.id);",
+		"\t\tif (Number.isInteger(id)) {",
+		"\t\t\tqueue.push({ kind: 'update', id });",
+		"\t\t\tpump();",
+		"\t\t}",
+		"\t} else if (msg.type === 'install') {",
+		"\t\tconst id = Number(msg.id);",
+		"\t\tif (Number.isInteger(id)) {",
+		"\t\t\tqueue.push({ kind: 'install', id });",
+		"\t\t\tpump();",
+		"\t\t}",
+		"\t} else if (msg.type === 'interrupt') {",
+		"\t\tinterrupt();",
+		"\t} else if (msg.type === 'ping') {",
+		"\t\tsend({ type: 'pong' });",
+		"\t}",
+		"}",
+		"",
+		"function handleConnection(conn) {",
+		"\tlet authed = false;",
+		"\tconst authTimer = setTimeout(() => {",
+		"\t\tif (!authed) {",
+		"\t\t\tconn.close(1008);",
+		"\t\t}",
+		"\t}, 10000);",
+		"\tconn.onMessage = (text) => {",
+		"\t\tlet msg;",
+		"\t\ttry {",
+		"\t\t\tmsg = JSON.parse(text);",
+		"\t\t} catch (e) {",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (typeof msg !== 'object' || msg === null) {",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (authed) {",
+		"\t\t\thandleClientMessage(msg);",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (Date.now() < lockedUntil) {",
+		"\t\t\tconn.send(JSON.stringify({ type: 'authfail', message: 'Too many wrong tokens. Wait a few seconds.' }));",
+		"\t\t\tconn.close(1008);",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (msg.type === 'auth' && typeof msg.token === 'string' && safeEqual(msg.token.trim(), TOKEN)) {",
+		"\t\t\tif (client && !client.closed) {",
+		"\t\t\t\tconn.send(JSON.stringify({ type: 'error', message: 'Another Roblox client is already connected.' }));",
+		"\t\t\t\tconn.close(1008);",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tauthed = true;",
+		"\t\t\tlocatedRoot = null;",
+		"\t\t\tfailures = 0;",
+		"\t\t\tclearTimeout(authTimer);",
+		"\t\t\tclient = conn;",
+		"\t\t\tlog(paint('32', '[Bases] Roblox client connected.'));",
+		"\t\t\tconn.send(JSON.stringify({ type: 'ready', shell: SHELL, cwd, auto: approveAll, version: 1 }));",
+		"\t\t} else {",
+		"\t\t\tfailures++;",
+		"\t\t\tif (failures >= 3) {",
+		"\t\t\t\tfailures = 0;",
+		"\t\t\t\tlockedUntil = Date.now() + 10000;",
+		"\t\t\t}",
+		"\t\t\tlog(paint('31', '[Bases] A client tried to connect with a wrong token.'));",
+		"\t\t\tconn.send(JSON.stringify({ type: 'authfail', message: 'Wrong token.' }));",
+		"\t\t\tconn.close(1008);",
+		"\t\t}",
+		"\t};",
+		"\tconn.onClose = () => {",
+		"\t\tclearTimeout(authTimer);",
+		"\t\tif (client === conn) {",
+		"\t\t\tclient = null;",
+		"\t\t\tlog(paint('33', '[Bases] Roblox client disconnected.'));",
+		"\t\t\tqueue.splice(0, queue.length);",
+		"\t\t\tcancelDownload();",
+		"\t\t\tlocatedRoot = null;",
+		"\t\t\tif (pendingAnswer) {",
+		"\t\t\t\tpendingAnswer('n');",
+		"\t\t\t\tpendingAnswer = null;",
+		"\t\t\t}",
+		"\t\t}",
+		"\t};",
+		"}",
+		"",
+		"const MARKER_NAME = /^bases_[a-z0-9]{6,40}\\.tmp$/;",
+		"const NONCE = /^[A-Za-z0-9]{8,64}$/;",
+		"const SKIP_DIRS = new Set([",
+		"\t'node_modules', '.git', 'windows', '$recycle.bin', 'system volume information', 'windowsapps',",
+		"\t'winsxs', 'cache', 'code cache', 'gpucache', 'crashpad', 'service worker'",
+		"]);",
+		"",
+		"function defaultRoots() {",
+		"\tconst roots = [];",
+		"\tconst add = (p) => {",
+		"\t\tif (p && roots.indexOf(p) === -1 && fs.existsSync(p)) {",
+		"\t\t\troots.push(p);",
+		"\t\t}",
+		"\t};",
+		"\textraRoots.forEach(add);",
+		"\tconst home = os.homedir();",
+		"\t['Desktop', 'Downloads', 'Documents'].forEach((n) => add(path.join(home, n)));",
+		"\tadd(process.env.LOCALAPPDATA);",
+		"\tadd(process.env.APPDATA);",
+		"\tadd(home);",
+		"\tadd(process.env.ProgramData);",
+		"\tadd(process.env.ProgramFiles);",
+		"\tadd(process.env['ProgramFiles(x86)']);",
+		"\tadd(process.cwd());",
+		"\tif (process.platform === 'win32') {",
+		"\t\tfor (const letter of 'CDEFGH') {",
+		"\t\t\tadd(letter + ':\\\\');",
+		"\t\t}",
+		"\t}",
+		"\treturn roots;",
+		"}",
+		"",
+		"function checkMarker(dir, name, nonce) {",
+		"\ttry {",
+		"\t\tconst text = fs.readFileSync(path.join(dir, name), 'utf8');",
+		"\t\treturn text.trim() === nonce;",
+		"\t} catch (e) {",
+		"\t\treturn false;",
+		"\t}",
+		"}",
+		"",
+		"async function findMarker(name, nonce, hint, isCancelled) {",
+		"\tif (typeof hint === 'string' && hint.length > 0 && hint.length < 600 && path.isAbsolute(hint) && checkMarker(hint, name, nonce)) {",
+		"\t\treturn hint;",
+		"\t}",
+		"\tconst visited = new Set();",
+		"\tlet level = defaultRoots();",
+		"\tconst deadline = Date.now() + SEARCH_BUDGET_MS;",
+		"\tfor (let depth = 0; depth <= SEARCH_MAX_DEPTH && level.length > 0; depth++) {",
+		"\t\tconst next = [];",
+		"\t\tfor (let i = 0; i < level.length; i = i + 24) {",
+		"\t\t\tif (Date.now() > deadline || isCancelled()) {",
+		"\t\t\t\treturn null;",
+		"\t\t\t}",
+		"\t\t\tconst chunk = level.slice(i, i + 24);",
+		"\t\t\tconst results = await Promise.all(chunk.map(async (dir) => {",
+		"\t\t\t\tconst key = dir.toLowerCase();",
+		"\t\t\t\tif (visited.has(key)) {",
+		"\t\t\t\t\treturn null;",
+		"\t\t\t\t}",
+		"\t\t\t\tvisited.add(key);",
+		"\t\t\t\tlet entries;",
+		"\t\t\t\ttry {",
+		"\t\t\t\t\tentries = await fs.promises.readdir(dir, { withFileTypes: true });",
+		"\t\t\t\t} catch (e) {",
+		"\t\t\t\t\treturn null;",
+		"\t\t\t\t}",
+		"\t\t\t\tlet hit = null;",
+		"\t\t\t\tconst subs = [];",
+		"\t\t\t\tfor (const entry of entries) {",
+		"\t\t\t\t\tif (entry.isFile() && entry.name.toLowerCase() === name) {",
+		"\t\t\t\t\t\thit = dir;",
+		"\t\t\t\t\t} else if (entry.isDirectory() && !entry.isSymbolicLink() && !SKIP_DIRS.has(entry.name.toLowerCase())) {",
+		"\t\t\t\t\t\tsubs.push(path.join(dir, entry.name));",
+		"\t\t\t\t\t}",
+		"\t\t\t\t}",
+		"\t\t\t\treturn { hit, subs };",
+		"\t\t\t}));",
+		"\t\t\tfor (const r of results) {",
+		"\t\t\t\tif (!r) {",
+		"\t\t\t\t\tcontinue;",
+		"\t\t\t\t}",
+		"\t\t\t\tif (r.hit && checkMarker(r.hit, name, nonce)) {",
+		"\t\t\t\t\treturn r.hit;",
+		"\t\t\t\t}",
+		"\t\t\t\tfor (const sub of r.subs) {",
+		"\t\t\t\t\tnext.push(sub);",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t}",
+		"\t\tlevel = next;",
+		"\t}",
+		"\treturn null;",
+		"}",
+		"",
+		"async function startLocate(msg) {",
+		"\tconst id = Number(msg.id);",
+		"\tconst name = typeof msg.name === 'string' ? msg.name.toLowerCase() : '';",
+		"\tconst nonce = typeof msg.nonce === 'string' ? msg.nonce : '';",
+		"\tif (!Number.isInteger(id) || !MARKER_NAME.test(name) || !NONCE.test(nonce)) {",
+		"\t\tsend({ type: 'locfail', id, message: 'Invalid locate request.' });",
+		"\t\treturn;",
+		"\t}",
+		"\tif (locating) {",
+		"\t\tsend({ type: 'locfail', id, message: 'Already looking for the workspace.' });",
+		"\t\treturn;",
+		"\t}",
+		"\tlocating = true;",
+		"\tconst owner = client;",
+		"\tlog(paint('90', '[Bases] Looking for the workspace marker file...'));",
+		"\tlet root = null;",
+		"\ttry {",
+		"\t\troot = await findMarker(name, nonce, msg.hint, () => client !== owner || !client || client.closed);",
+		"\t} catch (e) {",
+		"\t\troot = null;",
+		"\t}",
+		"\tlocating = false;",
+		"\tif (client !== owner) {",
+		"\t\treturn;",
+		"\t}",
+		"\tif (!root) {",
+		"\t\tsend({ type: 'locfail', id, message: 'Could not find the workspace folder. Start index.js with --search \"C:\\\\path\\\\to\\\\executor\" to point it at your executor folder.' });",
+		"\t\tlog(paint('33', '[Bases] Workspace marker not found.'));",
+		"\t\treturn;",
+		"\t}",
+		"\ttry {",
+		"\t\tfs.unlinkSync(path.join(root, name));",
+		"\t} catch (e) {",
+		"\t\tlog(paint('33', '[Bases] Could not delete the marker file ' + name + ' in ' + root));",
+		"\t}",
+		"\tlocatedRoot = root;",
+		"\tlog(paint('32', '[Bases] Workspace found: ' + root));",
+		"\tsend({ type: 'located', id, root });",
+		"}",
+		"",
+		"function validRelativeDir(rel) {",
+		"\tif (typeof rel !== 'string') {",
+		"\t\treturn null;",
+		"\t}",
+		"\tconst parts = rel.split('/');",
+		"\tif (parts.length < 1 || parts.length > 4) {",
+		"\t\treturn null;",
+		"\t}",
+		"\tfor (const part of parts) {",
+		"\t\tif (!/^[A-Za-z0-9 _-]{1,40}$/.test(part) || part.trim() === '') {",
+		"\t\t\treturn null;",
+		"\t\t}",
+		"\t}",
+		"\treturn parts;",
+		"}",
+		"",
+		"function cleanSongName(raw) {",
+		"\tif (typeof raw !== 'string') {",
+		"\t\treturn '';",
+		"\t}",
+		"\treturn raw",
+		"\t\t.replace(/[^A-Za-z0-9 ._()-]/g, '')",
+		"\t\t.replace(/\\s+/g, ' ')",
+		"\t\t.replace(/^[.\\s]+/, '')",
+		"\t\t.trim()",
+		"\t\t.slice(0, 60)",
+		"\t\t.trim();",
+		"}",
+		"",
+		"function prettifySongName(base) {",
+		"\treturn cleanSongName(base.replace(/_+/g, ' '));",
+		"}",
+		"",
+		"function uniqueFile(dir, base) {",
+		"\tlet name = base + '.mp3';",
+		"\tlet n = 2;",
+		"\twhile (fs.existsSync(path.join(dir, name))) {",
+		"\t\tname = base + ' ' + n + '.mp3';",
+		"\t\tn++;",
+		"\t}",
+		"\treturn name;",
+		"}",
+		"",
+		"function startDownload(msg) {",
+		"\tconst id = Number(msg.id);",
+		"\tif (!Number.isInteger(id)) {",
+		"\t\treturn;",
+		"\t}",
+		"\tconst fail = (message, code) => send({ type: 'dlerror', id, message, code });",
+		"\tif (!locatedRoot) {",
+		"\t\tfail('The workspace has not been located yet.', 'noroot');",
+		"\t\treturn;",
+		"\t}",
+		"\tconst query = typeof msg.query === 'string' ? msg.query.trim() : '';",
+		"\tif (query === '' || query.length > 500 || /[\\0\\r\\n]/.test(query) || query.charAt(0) === '-') {",
+		"\t\tfail('Enter a song name or a link.');",
+		"\t\treturn;",
+		"\t}",
+		"\tif (/^[a-z][a-z0-9+.-]*:\\/\\//i.test(query) && !/^https?:\\/\\//i.test(query)) {",
+		"\t\tfail('Only http and https links are allowed.');",
+		"\t\treturn;",
+		"\t}",
+		"\tconst parts = validRelativeDir(msg.dir);",
+		"\tif (!parts) {",
+		"\t\tfail('Invalid music folder.');",
+		"\t\treturn;",
+		"\t}",
+		"\tconst dir = path.join(locatedRoot, ...parts);",
+		"\tconst cookies = typeof msg.cookies === 'string' && COOKIE_BROWSERS.indexOf(msg.cookies) >= 0 ? msg.cookies : '';",
+		"\tqueue.push({ kind: 'download', id, query, dir, name: cleanSongName(msg.name), cookies });",
+		"\tpump();",
+		"}",
+		"",
+		"function killTree(proc) {",
+		"\tif (!proc) {",
+		"\t\treturn;",
+		"\t}",
+		"\tif (process.platform === 'win32') {",
+		"\t\tspawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });",
+		"\t} else {",
+		"\t\tproc.kill('SIGKILL');",
+		"\t}",
+		"}",
+		"",
+		"function cancelDownload() {",
+		"\tconst dl = curDl;",
+		"\tif (dl) {",
+		"\t\tdl.cancelled = true;",
+		"\t\tkillTree(dl.proc);",
+		"\t}",
+		"\tconst inst = curInstall;",
+		"\tif (inst) {",
+		"\t\tinst.cancelled = true;",
+		"\t\tkillTree(inst.proc);",
+		"\t}",
+		"}",
+		"",
+		"function refreshPath() {",
+		"\tif (process.platform !== 'win32') {",
+		"\t\treturn;",
+		"\t}",
+		"\tconst local = process.env.LOCALAPPDATA;",
+		"\tif (!local) {",
+		"\t\treturn;",
+		"\t}",
+		"\tconst links = path.join(local, 'Microsoft', 'WinGet', 'Links');",
+		"\tconst current = String(process.env.PATH || '');",
+		"\tconst has = current.split(path.delimiter).some((p) => p.toLowerCase() === links.toLowerCase());",
+		"\tif (!has && fs.existsSync(links)) {",
+		"\t\tprocess.env.PATH = links + path.delimiter + current;",
+		"\t}",
+		"}",
+		"refreshPath();",
+		"",
+		"function toolPresent(cmd, args) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tlet proc;",
+		"\t\ttry {",
+		"\t\t\tproc = spawn(cmd, args, { windowsHide: true, stdio: 'ignore' });",
+		"\t\t} catch (e) {",
+		"\t\t\tresolve(false);",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tproc.on('error', () => resolve(false));",
+		"\t\tproc.on('close', (code) => resolve(code === 0));",
+		"\t});",
+		"}",
+		"",
+		"async function missingTools() {",
+		"\tif (toolsOk) {",
+		"\t\treturn [];",
+		"\t}",
+		"\tconst results = await Promise.all([toolPresent(YTDLP, ['--version']), toolPresent(FFMPEG, ['-version'])]);",
+		"\tconst missing = [];",
+		"\tif (!results[0]) {",
+		"\t\tmissing.push('yt-dlp');",
+		"\t}",
+		"\tif (!results[1]) {",
+		"\t\tmissing.push('ffmpeg');",
+		"\t}",
+		"\tif (missing.length === 0) {",
+		"\t\ttoolsOk = true;",
+		"\t}",
+		"\treturn missing;",
+		"}",
+		"",
+		"function runStreaming(cmd, args, onLine, inst) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tlet proc;",
+		"\t\ttry {",
+		"\t\t\tproc = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });",
+		"\t\t} catch (e) {",
+		"\t\t\tresolve({ spawnError: true });",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tinst.proc = proc;",
+		"\t\tlet tail = '';",
+		"\t\tlet last = '';",
+		"\t\tlet all = '';",
+		"\t\tlet lastSent = 0;",
+		"\t\tconst feedText = (chunk) => {",
+		"\t\t\tconst parts = (tail + chunk).split(/[\\r\\n]+/);",
+		"\t\t\ttail = parts.pop();",
+		"\t\t\tfor (const part of parts) {",
+		"\t\t\t\tconst text = part.replace(ANSI, '').replace(/[▀-▟⠀-⣿]/g, '').replace(/\\s+/g, ' ').trim();",
+		"\t\t\t\tif (text.length < 3 || /^[-\\\\|/]+$/.test(text)) {",
+		"\t\t\t\t\tcontinue;",
+		"\t\t\t\t}",
+		"\t\t\t\tlast = text.slice(0, 120);",
+		"\t\t\t\tif (all.length < 4000) {",
+		"\t\t\t\t\tall = all + ' ' + text.toLowerCase();",
+		"\t\t\t\t}",
+		"\t\t\t\tconst now = Date.now();",
+		"\t\t\t\tif (now - lastSent > 300) {",
+		"\t\t\t\t\tlastSent = now;",
+		"\t\t\t\t\tonLine(last);",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t};",
+		"\t\tproc.stdout.setEncoding('utf8');",
+		"\t\tproc.stderr.setEncoding('utf8');",
+		"\t\tproc.stdout.on('data', feedText);",
+		"\t\tproc.stderr.on('data', feedText);",
+		"\t\tproc.on('error', (err) => resolve({ spawnError: true, message: err.message }));",
+		"\t\tproc.on('close', (code) => resolve({ code, last, all, cancelled: inst.cancelled }));",
+		"\t});",
+		"}",
+		"",
+		"function wingetArgs(verb, packageId) {",
+		"\treturn [verb, '--id', packageId, '--exact', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity'];",
+		"}",
+		"",
+		"function runWinget(packageId, onLine, inst) {",
+		"\treturn runStreaming(WINGET, wingetArgs('install', packageId), onLine, inst);",
+		"}",
+		"",
+		"function toolVersion(cmd) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tlet proc;",
+		"\t\ttry {",
+		"\t\t\tproc = spawn(cmd, ['--version'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });",
+		"\t\t} catch (e) {",
+		"\t\t\tresolve(null);",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tlet out = '';",
+		"\t\tproc.stdout.setEncoding('utf8');",
+		"\t\tproc.stdout.on('data', (d) => { out = out + d; });",
+		"\t\tproc.on('error', () => resolve(null));",
+		"\t\tproc.on('close', (code) => resolve(code === 0 ? (out.split(/\\r?\\n/)[0].trim() || 'unknown') : null));",
+		"\t});",
+		"}",
+		"",
+		"const NO_UPGRADE = /no (available|applicable)|no newer|up.?to.?date|already (installed|the latest)|latest version/;",
+		"",
+		"async function runUpdate(job) {",
+		"\tconst inst = { proc: null, cancelled: false };",
+		"\tcurInstall = inst;",
+		"\tconst status = (text) => send({ type: 'updstatus', id: job.id, stage: 'working', text });",
+		"\tconst fail = (message, code) => {",
+		"\t\tcurInstall = null;",
+		"\t\tsend({ type: 'upderror', id: job.id, message, code });",
+		"\t\tlog(paint('31', '[Bases] Update failed: ' + message));",
+		"\t};",
+		"\tconst before = await toolVersion(YTDLP);",
+		"\tif (!before) {",
+		"\t\tfail('yt-dlp is not installed on your PC yet.', 'notools');",
+		"\t\treturn;",
+		"\t}",
+		"\tstatus('Current version: ' + before);",
+		"\tstatus('Updating yt-dlp with winget...');",
+		"\tconst viaWinget = await runStreaming(WINGET, wingetArgs('upgrade', 'yt-dlp.yt-dlp'), (line) => status(line), inst);",
+		"\trefreshPath();",
+		"\tif (inst.cancelled) {",
+		"\t\tfail('Cancelled.');",
+		"\t\treturn;",
+		"\t}",
+		"\tlet method = 'winget';",
+		"\tlet after = await toolVersion(YTDLP);",
+		"\tconst upToDate = !viaWinget.spawnError && NO_UPGRADE.test(viaWinget.all || '');",
+		"\tif (viaWinget.spawnError || (viaWinget.code !== 0 && after === before && !upToDate)) {",
+		"\t\tmethod = 'self';",
+		"\t\tstatus('winget could not update it. Trying yt-dlp -U...');",
+		"\t\tconst self = await runStreaming(YTDLP, ['-U'], (line) => status(line), inst);",
+		"\t\tif (inst.cancelled) {",
+		"\t\t\tfail('Cancelled.');",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tafter = await toolVersion(YTDLP);",
+		"\t\tif (self.spawnError || (self.code !== 0 && after === before)) {",
+		"\t\t\tfail('Could not update yt-dlp.' + (self.last ? ' (' + self.last + ')' : ''));",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t}",
+		"\tcurInstall = null;",
+		"\ttoolsOk = false;",
+		"\tlog(paint('32', '[Bases] yt-dlp: ' + before + (after !== before ? ' -> ' + after : ' (already up to date)')));",
+		"\tsend({ type: 'updone', id: job.id, before, after: after || before, changed: after !== before && !!after, method });",
+		"}",
+		"",
+		"async function runInstall(job) {",
+		"\tconst inst = { proc: null, cancelled: false };",
+		"\tcurInstall = inst;",
+		"\tconst status = (text, tool) => send({ type: 'inststatus', id: job.id, stage: 'working', tool, text });",
+		"\tconst wanted = [",
+		"\t\t{ name: 'yt-dlp', id: 'yt-dlp.yt-dlp', present: () => toolPresent(YTDLP, ['--version']) },",
+		"\t\t{ name: 'ffmpeg', id: 'Gyan.FFmpeg', present: () => toolPresent(FFMPEG, ['-version']) }",
+		"\t];",
+		"\tconst installed = [];",
+		"\tconst skipped = [];",
+		"\tconst fail = (message) => {",
+		"\t\tcurInstall = null;",
+		"\t\tsend({ type: 'insterror', id: job.id, message });",
+		"\t\tlog(paint('31', '[Bases] Install failed: ' + message));",
+		"\t};",
+		"\tfor (const tool of wanted) {",
+		"\t\tif (inst.cancelled) {",
+		"\t\t\tfail('Cancelled.');",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (await tool.present()) {",
+		"\t\t\tskipped.push(tool.name);",
+		"\t\t\tcontinue;",
+		"\t\t}",
+		"\t\tstatus('Installing ' + tool.name + ' with winget...', tool.name);",
+		"\t\tconst result = await runWinget(tool.id, (line) => status(tool.name + ': ' + line, tool.name), inst);",
+		"\t\trefreshPath();",
+		"\t\tif (result.cancelled || inst.cancelled) {",
+		"\t\t\tfail('Cancelled.');",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (result.spawnError) {",
+		"\t\t\tfail('winget was not found. Install \"App Installer\" from the Microsoft Store, or install ' + tool.name + ' yourself and start index.js again.');",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tif (!(await tool.present())) {",
+		"\t\t\tfail(tool.name + ' was installed but is not visible yet. Close and reopen PowerShell, then start index.js again.' + (result.code !== 0 && result.last ? ' (winget: ' + result.last + ')' : ''));",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tinstalled.push(tool.name);",
+		"\t}",
+		"\tcurInstall = null;",
+		"\ttoolsOk = true;",
+		"\tlog(paint('32', '[Bases] Tools ready. Installed: ' + (installed.join(', ') || 'nothing') + '. Already there: ' + (skipped.join(', ') || 'nothing')));",
+		"\tsend({ type: 'instdone', id: job.id, installed, skipped });",
+		"}",
+		"",
+		"async function runDownload(job) {",
+		"\tconst missing = await missingTools();",
+		"\tif (missing.length > 0) {",
+		"\t\tsend({ type: 'dlerror', id: job.id, code: 'notools', missing, message: 'Missing on your PC: ' + missing.join(' and ') + '.' });",
+		"\t\tlog(paint('33', '[Bases] Missing tools: ' + missing.join(', ')));",
+		"\t\treturn;",
+		"\t}",
+		"\treturn runDownloadProcess(job);",
+		"}",
+		"",
+		"const KNOWN_GOOD_YTDLP = [2026, 8, 19];",
+		"const COOKIE_BROWSERS = ['chrome', 'edge', 'firefox', 'brave', 'opera', 'vivaldi', 'chromium'];",
+		"const RETRYABLE = /HTTP Error (403|404|429|5\\d\\d)|Forbidden|nsig|Sign in to confirm|not a bot|Requested format is not available|unable to extract|unable to download|timed out|temporar|connection (reset|aborted)|Remote end closed/i;",
+		"const OPTIONAL_FLAGS = new Set(['--embed-metadata', '--embed-thumbnail', '--no-embed-thumbnail', '--convert-thumbnails', '--js-runtimes', '--retries', '--fragment-retries', '--extractor-args', '--cookies-from-browser']);",
+		"const FLAG_VALUES = { '--convert-thumbnails': 1, '--js-runtimes': 1, '--retries': 1, '--fragment-retries': 1, '--extractor-args': 1, '--cookies-from-browser': 1 };",
+		"",
+		"function versionOlderThan(version, good) {",
+		"\tconst m = /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})/.exec(String(version || ''));",
+		"\tif (!m) {",
+		"\t\treturn null;",
+		"\t}",
+		"\tconst parts = [Number(m[1]), Number(m[2]), Number(m[3])];",
+		"\tfor (let i = 0; i < 3; i++) {",
+		"\t\tif (parts[i] !== good[i]) {",
+		"\t\t\treturn parts[i] < good[i];",
+		"\t\t}",
+		"\t}",
+		"\treturn false;",
+		"}",
+		"",
+		"function withoutFlags(args, dropped) {",
+		"\tconst out = [];",
+		"\tfor (let i = 0; i < args.length; i++) {",
+		"\t\tif (args[i] === '--') {",
+		"\t\t\treturn out.concat(args.slice(i));",
+		"\t\t}",
+		"\t\tif (dropped.has(args[i])) {",
+		"\t\t\ti = i + (FLAG_VALUES[args[i]] || 0);",
+		"\t\t\tcontinue;",
+		"\t\t}",
+		"\t\tout.push(args[i]);",
+		"\t}",
+		"\treturn out;",
+		"}",
+		"",
+		"function downloadAttempts() {",
+		"\treturn [",
+		"\t\t{ label: 'the embedded, web and TV clients', extra: ['--extractor-args', 'youtube:player_client=web_embedded,web,tv'] },",
+		"\t\t{ label: 'the default client', extra: [] },",
+		"\t\t{ label: 'the Android client and more', extra: ['--extractor-args', 'youtube:player_client=web_embedded,web,tv,android', '--no-embed-thumbnail'] }",
+		"\t];",
+		"}",
+		"",
+		"function runDownloadAttempt(job, ctl, spec, dropped, state) {",
+		"\treturn new Promise((resolve) => {",
+		"\t\tconst target = /^https?:\\/\\//i.test(job.query) ? job.query : 'ytsearch1:' + job.query;",
+		"\t\tlet args = [",
+		"\t\t\t'--no-playlist', '-x', '--audio-format', 'mp3', '--audio-quality', '0',",
+		"\t\t\t'--embed-metadata', '--embed-thumbnail', '--convert-thumbnails', 'jpg',",
+		"\t\t\t'--retries', '5', '--fragment-retries', '5',",
+		"\t\t\t'--js-runtimes', 'node:' + process.execPath,",
+		"\t\t\t'--restrict-filenames', '--newline', '--no-colors'",
+		"\t\t].concat(spec.extra);",
+		"\t\tif (job.cookies) {",
+		"\t\t\targs.push('--cookies-from-browser', job.cookies);",
+		"\t\t}",
+		"\t\targs = withoutFlags(args, dropped).concat(['-o', path.join(job.dir, '%(title).80s.%(ext)s'), '--', target]);",
+		"\t\tlet proc;",
+		"\t\ttry {",
+		"\t\t\tproc = spawn(YTDLP, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });",
+		"\t\t} catch (e) {",
+		"\t\t\tresolve({ ok: false, code: 'notools', missing: ['yt-dlp'], message: 'Missing on your PC: yt-dlp.', detail: [] });",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tctl.proc = proc;",
+		"\t\tlet destName = null;",
+		"\t\tlet lastError = '';",
+		"\t\tlet lastPercent = -1;",
+		"\t\tlet lastSent = 0;",
+		"\t\tlet spawnFailed = false;",
+		"\t\tconst detail = [];",
+		"\t\tconst status = (extra) => send(Object.assign({ type: 'dlstatus', id: job.id, attempt: state.attempt, attempts: state.total }, extra));",
+		"\t\tconst note = (text) => {",
+		"\t\t\tconst clipped = text.slice(0, 220);",
+		"\t\t\tif (detail.length < 12 && detail.indexOf(clipped) < 0) {",
+		"\t\t\t\tdetail.push(clipped);",
+		"\t\t\t}",
+		"\t\t};",
+		"\t\tconst handleLine = (line, isErr) => {",
+		"\t\t\tconst text = line.replace(ANSI, '').trim();",
+		"\t\t\tif (text === '') {",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tif (/^(ERROR|WARNING):/i.test(text)) {",
+		"\t\t\t\tnote(text);",
+		"\t\t\t}",
+		"\t\t\tif (isErr || /^ERROR:/i.test(text)) {",
+		"\t\t\t\tif (/^ERROR:/i.test(text) || lastError === '') {",
+		"\t\t\t\t\tlastError = text.replace(/^ERROR:\\s*/i, '');",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t\tlet m = /^\\[download\\]\\s+([\\d.]+)%/.exec(text);",
+		"\t\t\tif (m) {",
+		"\t\t\t\tconst pct = Math.min(100, Math.floor(Number(m[1])));",
+		"\t\t\t\tconst now = Date.now();",
+		"\t\t\t\tif (pct !== lastPercent && (now - lastSent > 250 || pct === 100)) {",
+		"\t\t\t\t\tlastPercent = pct;",
+		"\t\t\t\t\tlastSent = now;",
+		"\t\t\t\t\tconst size = /of\\s+~?\\s*([\\d.]+\\s?[KMGT]?i?B)/.exec(text);",
+		"\t\t\t\t\tconst speed = /at\\s+([\\d.]+\\s?[KMGT]?i?B\\/s)/.exec(text);",
+		"\t\t\t\t\tconst eta = /ETA\\s+(\\S+)/.exec(text);",
+		"\t\t\t\t\tstatus({ stage: 'downloading', percent: pct, title: destName || undefined, size: size ? size[1] : undefined, speed: speed ? speed[1] : undefined, eta: eta ? eta[1] : undefined });",
+		"\t\t\t\t}",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tm = /^\\[ExtractAudio\\] Destination:\\s*(.+)$/.exec(text);",
+		"\t\t\tif (m) {",
+		"\t\t\t\tdestName = path.basename(m[1].trim());",
+		"\t\t\t\tstatus({ stage: 'converting', title: destName });",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tif (/^\\[(Metadata|EmbedThumbnail|ThumbnailsConvertor|FFmpegMetadata)\\]/.test(text)) {",
+		"\t\t\t\tstatus({ stage: 'tagging' });",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tm = /^\\[download\\] Destination:\\s*(.+)$/.exec(text);",
+		"\t\t\tif (m) {",
+		"\t\t\t\tdestName = path.basename(m[1].trim());",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tm = /^\\[download\\]\\s+(.+) has already been downloaded/.exec(text);",
+		"\t\t\tif (m) {",
+		"\t\t\t\tdestName = path.basename(m[1].trim());",
+		"\t\t\t}",
+		"\t\t};",
+		"\t\tconst readers = { stdout: '', stderr: '' };",
+		"\t\tconst feed = (stream, chunk) => {",
+		"\t\t\treaders[stream] = readers[stream] + chunk;",
+		"\t\t\tconst lines = readers[stream].split(/\\r?\\n/);",
+		"\t\t\treaders[stream] = lines.pop();",
+		"\t\t\tfor (const line of lines) {",
+		"\t\t\t\thandleLine(line, stream === 'stderr');",
+		"\t\t\t}",
+		"\t\t};",
+		"\t\tproc.stdout.setEncoding('utf8');",
+		"\t\tproc.stderr.setEncoding('utf8');",
+		"\t\tproc.stdout.on('data', (d) => feed('stdout', d));",
+		"\t\tproc.stderr.on('data', (d) => feed('stderr', d));",
+		"\t\tproc.on('error', (err) => {",
+		"\t\t\tspawnFailed = true;",
+		"\t\t\tif (err.code === 'ENOENT') {",
+		"\t\t\t\ttoolsOk = false;",
+		"\t\t\t\tresolve({ ok: false, code: 'notools', missing: ['yt-dlp'], message: 'Missing on your PC: yt-dlp.', detail });",
+		"\t\t\t} else {",
+		"\t\t\t\tresolve({ ok: false, message: 'Could not start yt-dlp: ' + err.message, detail });",
+		"\t\t\t}",
+		"\t\t});",
+		"\t\tproc.on('close', (code) => {",
+		"\t\t\tif (spawnFailed) {",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\thandleLine(readers.stdout, false);",
+		"\t\t\thandleLine(readers.stderr, true);",
+		"\t\t\tif (ctl.cancelled) {",
+		"\t\t\t\tresolve({ ok: false, cancelled: true, message: 'Cancelled.', detail });",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tconst mp3Exists = destName !== null && /\\.mp3$/i.test(destName) && fs.existsSync(path.join(job.dir, destName));",
+		"\t\t\tconst softFail = code !== 0 && mp3Exists && /thumbnail|embed|postprocess|metadata|mutagen|atomicparsley/i.test(lastError);",
+		"\t\t\tif (softFail) {",
+		"\t\t\t\tlog(paint('33', '[Bases] Saved without embedded tags: ' + lastError.slice(0, 120)));",
+		"\t\t\t}",
+		"\t\t\tif (code !== 0 && !softFail) {",
+		"\t\t\t\tconst bad = /no such option:\\s*(--[a-z0-9-]+)/i.exec(lastError) || /no such option:\\s*(--[a-z0-9-]+)/i.exec(detail.join('\\n'));",
+		"\t\t\t\tif (bad) {",
+		"\t\t\t\t\tresolve({ ok: false, badOption: bad[1], message: lastError, detail });",
+		"\t\t\t\t} else if (/ffmpeg|ffprobe/i.test(lastError)) {",
+		"\t\t\t\t\ttoolsOk = false;",
+		"\t\t\t\t\tresolve({ ok: false, code: 'notools', missing: ['ffmpeg'], message: 'Missing on your PC: ffmpeg.', detail });",
+		"\t\t\t\t} else {",
+		"\t\t\t\t\tresolve({ ok: false, retryable: RETRYABLE.test(lastError), message: lastError || 'yt-dlp exited with code ' + code, detail });",
+		"\t\t\t\t}",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tlet produced = null;",
+		"\t\t\tif (mp3Exists) {",
+		"\t\t\t\tproduced = destName;",
+		"\t\t\t} else {",
+		"\t\t\t\tlet after = [];",
+		"\t\t\t\ttry {",
+		"\t\t\t\t\tafter = fs.readdirSync(job.dir);",
+		"\t\t\t\t} catch (e) {",
+		"\t\t\t\t\tafter = [];",
+		"\t\t\t\t}",
+		"\t\t\t\tconst fresh = after.filter((f) => !state.before.has(f) && /\\.mp3$/i.test(f));",
+		"\t\t\t\tproduced = fresh.length > 0 ? fresh[0] : null;",
+		"\t\t\t}",
+		"\t\t\tif (!produced) {",
+		"\t\t\t\tresolve({ ok: false, message: 'yt-dlp finished but no mp3 file was found.', detail });",
+		"\t\t\t\treturn;",
+		"\t\t\t}",
+		"\t\t\tresolve({ ok: true, produced, detail });",
+		"\t\t});",
+		"\t});",
+		"}",
+		"",
+		"async function runDownloadProcess(job) {",
+		"\tconst ctl = { proc: null, id: job.id, cancelled: false };",
+		"\tcurDl = ctl;",
+		"\tconst timer = setTimeout(() => cancelDownload(), 20 * 60 * 1000);",
+		"\tconst end = () => {",
+		"\t\tcurDl = null;",
+		"\t\tclearTimeout(timer);",
+		"\t};",
+		"\tconst failWith = (message, code, extra) => {",
+		"\t\tend();",
+		"\t\tsend(Object.assign({ type: 'dlerror', id: job.id, message, code }, extra || {}));",
+		"\t\tlog(paint('31', '[Bases] Download failed: ' + message));",
+		"\t};",
+		"\tlet before;",
+		"\ttry {",
+		"\t\tfs.mkdirSync(job.dir, { recursive: true });",
+		"\t\tbefore = new Set(fs.readdirSync(job.dir));",
+		"\t} catch (e) {",
+		"\t\tfailWith('Could not open the music folder: ' + e.message);",
+		"\t\treturn;",
+		"\t}",
+		"\tconst version = await toolVersion(YTDLP);",
+		"\tconst specs = downloadAttempts();",
+		"\tconst state = { before, attempt: 1, total: specs.length };",
+		"\tconst dropped = new Set();",
+		"\tconst detail = [];",
+		"\tlet last = null;",
+		"\tlet tried = 0;",
+		"\tfor (let i = 0; i < specs.length; i++) {",
+		"\t\tif (ctl.cancelled) {",
+		"\t\t\tbreak;",
+		"\t\t}",
+		"\t\tstate.attempt = i + 1;",
+		"\t\ttried = i + 1;",
+		"\t\tif (i === 0) {",
+		"\t\t\tsend({ type: 'dlstatus', id: job.id, stage: 'starting', attempt: 1, attempts: specs.length });",
+		"\t\t} else {",
+		"\t\t\tsend({ type: 'dlstatus', id: job.id, stage: 'retry', attempt: i + 1, attempts: specs.length, text: 'Blocked. Trying ' + specs[i].label + ' (' + (i + 1) + '/' + specs.length + ')...' });",
+		"\t\t\tlog(paint('33', '[Bases] Retrying with ' + specs[i].label + ': ' + (last && last.message ? last.message.slice(0, 120) : '')));",
+		"\t\t}",
+		"\t\tlet r = await runDownloadAttempt(job, ctl, specs[i], dropped, state);",
+		"\t\tfor (let k = 0; k < 6 && r.badOption && OPTIONAL_FLAGS.has(r.badOption) && !dropped.has(r.badOption); k++) {",
+		"\t\t\tdropped.add(r.badOption);",
+		"\t\t\tr = await runDownloadAttempt(job, ctl, specs[i], dropped, state);",
+		"\t\t}",
+		"\t\tfor (const d of r.detail || []) {",
+		"\t\t\tif (detail.indexOf(d) < 0 && detail.length < 14) {",
+		"\t\t\t\tdetail.push(d);",
+		"\t\t\t}",
+		"\t\t}",
+		"\t\tif (r.ok) {",
+		"\t\t\tlet finalName = r.produced;",
+		"\t\t\tconst wanted = job.name || prettifySongName(r.produced.replace(/\\.mp3$/i, ''));",
+		"\t\t\tif (wanted !== '' && wanted + '.mp3' !== r.produced) {",
+		"\t\t\t\ttry {",
+		"\t\t\t\t\tfinalName = uniqueFile(job.dir, wanted);",
+		"\t\t\t\t\tfs.renameSync(path.join(job.dir, r.produced), path.join(job.dir, finalName));",
+		"\t\t\t\t} catch (e) {",
+		"\t\t\t\t\tfinalName = r.produced;",
+		"\t\t\t\t}",
+		"\t\t\t}",
+		"\t\t\tend();",
+		"\t\t\tlog(paint('32', '[Bases] Saved ' + finalName));",
+		"\t\t\tsend({ type: 'dldone', id: job.id, file: finalName, attempt: i + 1 });",
+		"\t\t\treturn;",
+		"\t\t}",
+		"\t\tlast = r;",
+		"\t\tif (!r.retryable || ctl.cancelled) {",
+		"\t\t\tbreak;",
+		"\t\t}",
+		"\t}",
+		"\tif (ctl.cancelled || (last && last.cancelled)) {",
+		"\t\tfailWith('Cancelled.');",
+		"\t\treturn;",
+		"\t}",
+		"\tif (!last) {",
+		"\t\tfailWith('The download did not start.');",
+		"\t\treturn;",
+		"\t}",
+		"\tif (last.code === 'notools') {",
+		"\t\tend();",
+		"\t\tsend({ type: 'dlerror', id: job.id, message: last.message, code: 'notools', missing: last.missing });",
+		"\t\tlog(paint('33', '[Bases] Missing tools: ' + (last.missing || []).join(', ')));",
+		"\t\treturn;",
+		"\t}",
+		"\tconst reason = String(last.message || 'yt-dlp failed').slice(0, 180);",
+		"\tif (last.retryable) {",
+		"\t\tconst old = versionOlderThan(version, KNOWN_GOOD_YTDLP);",
+		"\t\tconst vtext = version ? 'yt-dlp ' + version : 'Your yt-dlp';",
+		"\t\tif (old === false) {",
+		"\t\t\tfailWith(reason + ' (' + vtext + ' is up to date, so YouTube is blocking this request after ' + tried + ' methods. Try again later, another video, or turn on Browser Cookies in Settings.)', 'blocked', { detail, version });",
+		"\t\t} else {",
+		"\t\t\tfailWith(reason + ' (' + vtext + ' may be outdated: use Update)', 'outdated', { detail, version });",
+		"\t\t}",
+		"\t\treturn;",
+		"\t}",
+		"\tfailWith(reason, undefined, { detail, version });",
+		"}",
+		"",
+		"const allowedHostNames = ['127.0.0.1', 'localhost', '[::1]'];",
+		"",
+		"const server = http.createServer((req, res) => {",
+		"\tres.writeHead(426, { 'Content-Type': 'text/plain' });",
+		"\tres.end('Bases Terminal: WebSocket only.');",
+		"});",
+		"",
+		"function reject(socket, code, text, reason, req) {",
+		"\tsocket.end('HTTP/1.1 ' + code + ' ' + text + '\\r\\nConnection: close\\r\\n\\r\\n');",
+		"\tlog(paint('33', 'Rejected a connection (' + reason + '). Headers: ' + JSON.stringify(req.headers)));",
+		"}",
+		"",
+		"server.on('upgrade', (req, socket) => {",
+		"\tconst key = req.headers['sec-websocket-key'];",
+		"\tconst upgrade = String(req.headers.upgrade || '').toLowerCase();",
+		"\tconst host = String(req.headers.host || '').toLowerCase().replace(/:\\d+$/, '');",
+		"\tif (allowedHostNames.indexOf(host) === -1) {",
+		"\t\treject(socket, 403, 'Forbidden', 'unexpected Host', req);",
+		"\t\treturn;",
+		"\t}",
+		"\tif (req.headers.origin && req.headers['sec-fetch-site']) {",
+		"\t\treject(socket, 403, 'Forbidden', 'request came from a web page', req);",
+		"\t\treturn;",
+		"\t}",
+		"\tif (upgrade !== 'websocket' || !key) {",
+		"\t\treject(socket, 400, 'Bad Request', 'not a WebSocket handshake', req);",
+		"\t\treturn;",
+		"\t}",
+		"\tconst version = req.headers['sec-websocket-version'];",
+		"\tif (version && version !== '13') {",
+		"\t\treject(socket, 400, 'Bad Request', 'unsupported WebSocket version', req);",
+		"\t\treturn;",
+		"\t}",
+		"\tconst accept = crypto",
+		"\t\t.createHash('sha1')",
+		"\t\t.update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')",
+		"\t\t.digest('base64');",
+		"\tsocket.write(",
+		"\t\t'HTTP/1.1 101 Switching Protocols\\r\\n' +",
+		"\t\t\t'Upgrade: websocket\\r\\n' +",
+		"\t\t\t'Connection: Upgrade\\r\\n' +",
+		"\t\t\t'Sec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n'",
+		"\t);",
+		"\tsocket.setNoDelay(true);",
+		"\thandleConnection(new Connection(socket));",
+		"});",
+		"",
+		"server.on('error', (err) => {",
+		"\tif (err.code === 'EADDRINUSE') {",
+		"\t\tlog(paint('31', 'Port ' + PORT + ' is already in use. Close the other window or run: node index.js --port 9000'));",
+		"\t} else {",
+		"\t\tlog(paint('31', 'Server error: ' + err.message));",
+		"\t}",
+		"\tprocess.exit(1);",
+		"});",
+		"",
+		"server.listen(PORT, HOST, () => {",
+		"\tlog('');",
+		"\tlog(paint('1', 'Bases Terminal'));",
+		"\tlog('Shell      : ' + SHELL);",
+		"\tlog('Listening  : ws://' + HOST + ':' + PORT);",
+		"\tlog('Token      : ' + paint('1;36', TOKEN));",
+		"\tlog('');",
+		"\tlog('Open the Terminal tab in Bases Menu, enter the token and press Connect.');",
+		"\tlog(approveAll ? paint('33', 'Auto-approve is ON: every command from Roblox runs without asking.') : 'Each command from Roblox needs your approval here: y (once), a (always this session), n (deny).');",
+		"\tlog('Press Ctrl+C to stop.');",
+		"});",
+		"",
+		"process.on('SIGINT', () => {",
+		"\tkillShell();",
+		"\tprocess.exit(0);",
+		"});",
+		"process.on('exit', () => {",
+		"\tkillShell();",
+		"});",
+	}, "\n")
+
+	local term = { sock = nil, session = 0, state = "disconnected", cwd = "", pending = 0, awaiting = false, nextId = 0, history = {}, histPos = 1 }
+	local dirty = false
+	local colors = {
+		out = Color3.fromHex("#E6E6E6"),
+		err = Color3.fromHex("#E06C75"),
+		info = Color3.fromHex("#61AFEF"),
+		warn = Color3.fromHex("#E5C07B"),
+		cmd = Color3.fromHex("#98C379"),
+		ok = Color3.fromHex("#98C379"),
+	}
+	local view = { rowH = 17, charW = 8, cols = 80, entries = {}, rowText = {}, rowKind = {}, rows = 0, pool = {}, poolRow = {}, poolSize = 0, canvasH = 16, stick = true, resizeToken = 0 }
+
+	UI.terminalPage = new("Frame", { Name = "TerminalPage", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false }, UI.pageContainer)
+
+	UI.termBar = new("Frame", { Name = "TerminalBar", Size = UDim2.new(1, -48, 0, 32), Position = UDim2.new(0, 24, 0, 16), BackgroundTransparency = 1 }, UI.terminalPage)
+	UI.termBarLeft = new("Frame", { Size = UDim2.new(0.55, 0, 1, 0), BackgroundTransparency = 1 }, UI.termBar)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, UI.termBarLeft)
+	UI.termClearBtn = iconBtn("Clear", { "trash-can" }, 96, UI.termBarLeft, 32, false)
+	UI.termClearBtn.LayoutOrder = 1
+	UI.termCopyBtn = iconBtn("Copy", { "two-stacked-squares" }, 96, UI.termBarLeft, 32, false)
+	UI.termCopyBtn.LayoutOrder = 2
+	UI.termStopBtn = iconBtn("Stop", { "stop-small" }, 96, UI.termBarLeft, 32, false)
+	UI.termStopBtn.LayoutOrder = 3
+
+	UI.termBarRight = new("Frame", { Size = UDim2.new(0.45, 0, 1, 0), Position = UDim2.new(0.55, 0, 0, 0), BackgroundTransparency = 1 }, UI.termBar)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 10),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, UI.termBarRight)
+	UI.termStatus = new("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "Disconnected",
+		TextColor3 = C.sub,
+		TextSize = 14,
+		FontFace = sans(),
+		LayoutOrder = 1,
+	}, UI.termBarRight)
+	UI.termDisconnectBtn = iconBtn("Disconnect", { "chain-link-slash" }, 130, UI.termBarRight, 32, false)
+	UI.termDisconnectBtn.LayoutOrder = 2
+
+	UI.termScroll = new("ScrollingFrame", {
+		Name = "TerminalOutput",
+		Position = UDim2.new(0, 24, 0, 60),
+		Size = UDim2.new(1, -48, 1, -132),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.6,
+		ScrollBarThickness = 4,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		AutomaticCanvasSize = Enum.AutomaticSize.None,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		Visible = false,
+	}, UI.terminalPage)
+	corner(UI.termScroll, 8)
+	UI.termJump = iconBtn("", { "arrow-down-to-line" }, 34, UI.terminalPage, 34, true)
+	UI.termJump.Position = UDim2.new(1, -70, 1, -116)
+	UI.termJump.Visible = false
+
+	UI.termRow = new("Frame", { Name = "TerminalInputRow", Position = UDim2.new(0, 24, 1, -60), Size = UDim2.new(1, -48, 0, 36), BackgroundTransparency = 1, Visible = false }, UI.terminalPage)
+	UI.termInputHolder = new("Frame", { Size = UDim2.new(1, -52, 1, 0), BackgroundColor3 = C.card, BackgroundTransparency = 0.3 }, UI.termRow)
+	corner(UI.termInputHolder, 8)
+	UI.termPrompt = new("TextLabel", {
+		Position = UDim2.new(0, 12, 0, 0),
+		Size = UDim2.new(0, 40, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "PS>",
+		TextColor3 = Color3.fromHex("#98C379"),
+		TextSize = 13,
+		FontFace = MONO,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, UI.termInputHolder)
+	UI.termInput = new("TextBox", {
+		Position = UDim2.new(0, 56, 0, 0),
+		Size = UDim2.new(1, -68, 1, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		PlaceholderText = "Type a PowerShell command and press Enter",
+		PlaceholderColor3 = C.sub,
+		TextColor3 = C.text,
+		TextSize = 13,
+		FontFace = MONO,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		ClipsDescendants = true,
+	}, UI.termInputHolder)
+	UI.termRunBtn = iconBtn("", { "paper-airplane" }, 44, UI.termRow, 36, true)
+	UI.termRunBtn.Position = UDim2.new(1, -44, 0, 0)
+
+	UI.termSetup = new("ScrollingFrame", {
+		Name = "TerminalSetup",
+		Position = UDim2.new(0, 24, 0, 60),
+		Size = UDim2.new(1, -48, 1, -84),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.6,
+		ScrollBarThickness = 4,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+	}, UI.terminalPage)
+	corner(UI.termSetup, 8)
+	padding(UI.termSetup, 16, 18, 16, 18)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, UI.termSetup)
+
+	local function setupLabel(order, text, size, color, font)
+		return new("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			RichText = true,
+			Text = text,
+			TextWrapped = true,
+			TextColor3 = color or C.text,
+			TextSize = size or 14,
+			FontFace = font or sans(Enum.FontWeight.Regular),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			LayoutOrder = order,
+		}, UI.termSetup)
+	end
+
+	setupLabel(1, "Connect Windows PowerShell", 20, C.text, sans())
+	UI.brand.bind(setupLabel(2, "", 13, C.sub), function(name)
+		return "Run PowerShell commands on your PC from inside " .. esc(name) .. ". A small Node.js helper (index.js) sits between this tab and PowerShell over a local WebSocket. It only listens on 127.0.0.1 and needs a token."
+	end)
+
+	local linkLine = ""
+	if TERMINAL_JS_URL ~= "" then
+		linkLine = '\n      Direct download link: <font color="#61AFEF">' .. esc(TERMINAL_JS_URL) .. "</font>"
+	end
+	setupLabel(
+		3,
+		'<b>1.</b>  Install Node.js 18 or newer from <font color="#61AFEF">https://nodejs.org</font> if you do not have it yet.\n'
+			.. "<b>2.</b>  Get index.js: press <b>Save index.js</b> below. It is written to "
+			.. '<font color="#E5C07B">'
+			.. esc(TERM_DIR)
+			.. "/index.js</font> inside your executor's workspace folder."
+			.. linkLine
+			.. "\n<b>3.</b>  Open that folder in File Explorer, click the address bar, type <b>powershell</b> and press Enter.\n"
+			.. '<b>4.</b>  In the PowerShell window run:  <font color="#98C379">node index.js</font>\n'
+			.. "<b>5.</b>  The window prints a token. Type it below, keep the port the same and press <b>Connect</b>.\n"
+			.. "<b>6.</b>  Every command you send needs your approval in that PowerShell window:  <b>y</b> once,  <b>a</b> always this session,  <b>n</b> deny.\n\n"
+			.. "No npm install is needed. index.js has no dependencies. To use another port run  node index.js --port 9000  and change the port below.\n\n"
+			.. "<b>Song downloads:</b>  once connected, the Music tab has a download button. It needs yt-dlp and ffmpeg. If they are missing it offers to install them with winget (you approve it in the PowerShell window); anything already installed is skipped.  index.js finds your workspace folder by itself using a temporary marker file. If it cannot, start it with  node index.js --search \"C:\\path\\to\\your\\executor\"."
+	)
+
+	UI.termSetupButtons = new("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, LayoutOrder = 4 }, UI.termSetup)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, UI.termSetupButtons)
+	UI.termSaveBtn = iconBtn("Save index.js", { "floppy-disk" }, 140, UI.termSetupButtons, 34, false)
+	UI.termSaveBtn.LayoutOrder = 1
+	UI.termCopySrcBtn = iconBtn("Copy Source", { "two-stacked-squares" }, 128, UI.termSetupButtons, 34, false)
+	UI.termCopySrcBtn.LayoutOrder = 2
+	UI.termCopyCmdBtn = iconBtn("Copy Command", { "key-return" }, 152, UI.termSetupButtons, 34, false)
+	UI.termCopyCmdBtn.LayoutOrder = 3
+	UI.termCopyLinkBtn = iconBtn("Copy Link", { "chain-link" }, 118, UI.termSetupButtons, 34, false)
+	UI.termCopyLinkBtn.LayoutOrder = 4
+	UI.termCopyLinkBtn.Visible = TERMINAL_JS_URL ~= ""
+
+	UI.termConnectRow = new("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, LayoutOrder = 5 }, UI.termSetup)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, UI.termConnectRow)
+	UI.termPort = inputBox("Port", UI.termConnectRow)
+	UI.termPort.Size = UDim2.new(0, 84, 1, 0)
+	UI.termPort.Text = tostring(settings.terminalPort)
+	UI.termPort.LayoutOrder = 1
+	UI.termToken = inputBox("Token from the PowerShell window", UI.termConnectRow)
+	UI.termToken.Size = UDim2.new(0, 260, 1, 0)
+	UI.termToken.LayoutOrder = 2
+	UI.termConnectBtn = iconBtn("Connect", { "chain-link" }, 130, UI.termConnectRow, 36, true)
+	UI.termConnectBtn.LayoutOrder = 3
+
+	UI.termMessage = setupLabel(6, "", 13, C.sub)
+	setupLabel(7, "Security: only run index.js on your own PC. Any script you execute in Roblox can reach the helper, so keep the token private and never answer y or a to a command you did not send yourself.", 12, C.sub)
+
+	local function showMessage(text, kind)
+		local color = { err = C.red, warn = C.yellow, ok = C.green }
+		UI.termMessage.Text = esc(text)
+		UI.termMessage.TextColor3 = color[kind] or C.sub
+	end
+
+	local ROW_BUFFER = 6
+	local MAX_ROWS = 50000
+	local PAD = 8
+
+	local function num(value, fallback)
+		return type(value) == "number" and value or fallback
+	end
+
+	local function fontSize()
+		return math.clamp(math.floor(num(settings.terminalFontSize, 13)), 9, 24)
+	end
+
+	local function viewSize()
+		local size = UI.termScroll.AbsoluteSize
+		local scale = UI.scaleValue or 1
+		local w, h = num(size.X, 700) / scale, num(size.Y, 320) / scale
+		if w < 120 then
+			w = 700
+		end
+		if h < 40 then
+			h = 320
+		end
+		return w, h
+	end
+
+	local function calcCols()
+		local width = viewSize()
+		return math.max(20, math.floor((width - PAD * 2 - 8) / view.charW) - 1)
+	end
+
+	local function cleanLine(text)
+		text = tostring(text):gsub("\t", "    ")
+		text = text:gsub("%c", "")
+		if not utf8.len(text) then
+			text = text:gsub("[\128-\255]", "?")
+		end
+		local cut = utf8.offset(text, 4001)
+		if cut then
+			text = text:sub(1, cut - 1) .. "..."
+		end
+		return text
+	end
+
+	local function addRow(kind, text)
+		local n = view.rows + 1
+		view.rows = n
+		view.rowText[n] = text
+		view.rowKind[n] = kind
+	end
+
+	local function wrapInto(kind, text)
+		local cols = view.cols
+		if (utf8.len(text) or #text) <= cols then
+			addRow(kind, text)
+			return
+		end
+		local pos = 1
+		local total = #text
+		while pos <= total do
+			local nextPos = utf8.offset(text, cols + 1, pos)
+			if not nextPos or nextPos > total then
+				addRow(kind, text:sub(pos))
+				break
+			end
+			addRow(kind, text:sub(pos, nextPos - 1))
+			pos = nextPos
+		end
+	end
+
+	local function resetPool()
+		view.poolRow = {}
+		for i = 1, view.poolSize do
+			local lbl = view.pool[i]
+			if lbl then
+				lbl.Visible = false
+			end
+		end
+	end
+
+	local function rebuildRows()
+		view.rows = 0
+		view.rowText, view.rowKind = {}, {}
+		for _, e in ipairs(view.entries) do
+			e[4] = view.rows + 1
+			wrapInto(e[1], e[2])
+		end
+		resetPool()
+	end
+
+	local function poolLabel(i)
+		local lbl = view.pool[i]
+		if not lbl then
+			lbl = new("TextLabel", {
+				BackgroundTransparency = 1,
+				Size = UDim2.new(1, -PAD * 2, 0, view.rowH),
+				Text = "",
+				TextColor3 = colors.out,
+				TextSize = fontSize(),
+				FontFace = MONO,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextYAlignment = Enum.TextYAlignment.Center,
+				TextWrapped = false,
+				RichText = false,
+				Visible = false,
+			}, UI.termScroll)
+			view.pool[i] = lbl
+		end
+		return lbl
+	end
+
+	local function atBottom()
+		local _, viewH = viewSize()
+		return num(UI.termScroll.CanvasPosition.Y, 0) >= view.canvasH - viewH - view.rowH * 1.5
+	end
+
+	local function updateJump()
+		UI.termJump.Visible = UI.termScroll.Visible and view.rows > 0 and not atBottom()
+	end
+
+	local function render()
+		local _, viewH = viewSize()
+		local rowH = view.rowH
+		local top = num(UI.termScroll.CanvasPosition.Y, 0)
+		local visibleRows = math.ceil(viewH / rowH) + 1
+		local first = math.max(1, math.floor((top - PAD) / rowH) + 1 - ROW_BUFFER)
+		local last = math.min(view.rows, first + visibleRows + ROW_BUFFER * 2)
+		local wanted = visibleRows + ROW_BUFFER * 2 + 2
+		if wanted > view.poolSize then
+			view.poolSize = wanted
+			view.poolRow = {}
+		end
+		local size = view.poolSize
+		for i = 1, size do
+			local lbl = view.pool[i]
+			local r = view.poolRow[i]
+			if lbl and r and (r < first or r > last) then
+				lbl.Visible = false
+				view.poolRow[i] = nil
+			end
+		end
+		for r = first, last do
+			local i = (r - 1) % size + 1
+			local lbl = poolLabel(i)
+			if view.poolRow[i] ~= r then
+				view.poolRow[i] = r
+				lbl.Text = view.rowText[r]
+				lbl.TextColor3 = colors[view.rowKind[r]] or colors.out
+				lbl.Position = UDim2.new(0, PAD, 0, PAD + (r - 1) * rowH)
+				lbl.Visible = true
+			end
+		end
+	end
+
+	local function setCanvas()
+		view.canvasH = view.rows * view.rowH + PAD * 2
+		UI.termScroll.CanvasSize = UDim2.new(0, 0, 0, view.canvasH)
+	end
+
+	local function scrollToBottom()
+		local _, viewH = viewSize()
+		UI.termScroll.CanvasPosition = Vector2.new(0, math.max(0, view.canvasH - viewH))
+	end
+
+	local function dropOldest(count)
+		local entries = view.entries
+		local total = #entries
+		count = math.min(count, total)
+		if count <= 0 then
+			return
+		end
+		table.move(entries, count + 1, total, 1)
+		for i = total - count + 1, total do
+			entries[i] = nil
+		end
+		rebuildRows()
+	end
+
+	local function enforceLimits()
+		local max = math.max(100, num(settings.terminalMaxLines, 5000))
+		local count = #view.entries
+		if count > max + math.max(100, math.floor(max * 0.1)) then
+			dropOldest(count - max)
+		end
+		local guard = 0
+		while view.rows > MAX_ROWS and #view.entries > 1 and guard < 8 do
+			dropOldest(math.max(1, math.floor(#view.entries * 0.2)))
+			guard = guard + 1
+		end
+	end
+
+	local function flush()
+		dirty = false
+		local follow = view.stick or (settings.terminalAutoscroll and atBottom())
+		view.stick = false
+		local rowsBefore = view.rows
+		enforceLimits()
+		local removed = rowsBefore - view.rows
+		local top = num(UI.termScroll.CanvasPosition.Y, 0)
+		setCanvas()
+		if removed > 0 and not follow then
+			UI.termScroll.CanvasPosition = Vector2.new(0, math.max(0, top - removed * view.rowH))
+		end
+		render()
+		if follow then
+			task.defer(function()
+				scrollToBottom()
+				render()
+				updateJump()
+			end)
+		end
+		updateJump()
+	end
+
+	local function markDirty()
+		if not dirty then
+			dirty = true
+			task.delay(0.1, function()
+				if running then
+					flush()
+				end
+			end)
+		end
+	end
+
+	local function push(kind, text)
+		text = cleanLine(text)
+		local entries = view.entries
+		entries[#entries + 1] = { kind, text, false, view.rows + 1 }
+		wrapInto(kind, text)
+		markDirty()
+	end
+
+	local function progressLine(text, kind, live)
+		text = cleanLine(text)
+		local entries = view.entries
+		local last = entries[#entries]
+		if last and last[3] == true then
+			local start = last[4]
+			for r = view.rows, start, -1 do
+				view.rowText[r] = nil
+				view.rowKind[r] = nil
+			end
+			view.rows = start - 1
+			last[1], last[2], last[3] = kind, text, live == true
+			wrapInto(kind, text)
+			resetPool()
+		else
+			entries[#entries + 1] = { kind, text, live == true, view.rows + 1 }
+			wrapInto(kind, text)
+		end
+		markDirty()
+	end
+
+	local function endLive()
+		local entries = view.entries
+		local last = entries[#entries]
+		if last then
+			last[3] = false
+		end
+	end
+
+	local function clearOutput()
+		view.entries = {}
+		view.stick = true
+		rebuildRows()
+		flush()
+	end
+
+	local function outputText()
+		local out = {}
+		for i, e in ipairs(view.entries) do
+			out[i] = e[2]
+		end
+		return table.concat(out, "\n")
+	end
+
+	local function relayout(force)
+		local cols = calcCols()
+		local follow = atBottom()
+		if cols ~= view.cols or force then
+			view.cols = cols
+			rebuildRows()
+		end
+		setCanvas()
+		render()
+		if follow then
+			task.defer(function()
+				scrollToBottom()
+				render()
+				updateJump()
+			end)
+		end
+		updateJump()
+	end
+
+	local function applyFontSetting()
+		local size = fontSize()
+		view.rowH = size + 4
+		view.charW = size * 0.6
+		for i = 1, view.poolSize do
+			local lbl = view.pool[i]
+			if lbl then
+				lbl.TextSize = size
+				lbl.Size = UDim2.new(1, -PAD * 2, 0, view.rowH)
+			end
+		end
+		UI.termPrompt.TextSize = size
+		UI.termInput.TextSize = size
+		view.cols = calcCols()
+		rebuildRows()
+		setCanvas()
+		render()
+		task.spawn(function()
+			local measured
+			pcall(function()
+				local p = Instance.new("GetTextBoundsParams")
+				p.Font = MONO
+				p.Size = size
+				p.Width = 100000
+				p.Text = string.rep("M", 100)
+				measured = textService:GetTextBoundsAsync(p).X / 100
+			end)
+			if fontSize() == size and type(measured) == "number" and measured >= 3 and math.abs(measured - view.charW) > 0.05 then
+				view.charW = measured
+				relayout(true)
+			end
+		end)
+	end
+
+	local function updatePrompt()
+		local cwd = term.cwd
+		if #cwd > 30 then
+			cwd = "..." .. cwd:sub(-27)
+		end
+		local text = cwd ~= "" and ("PS " .. cwd .. ">") or "PS>"
+		UI.termPrompt.Text = text
+		local w = math.clamp(math.floor(#text * view.charW) + 8, 36, 300)
+		UI.termPrompt.Size = UDim2.new(0, w, 1, 0)
+		UI.termInput.Position = UDim2.new(0, 12 + w + 8, 0, 0)
+		UI.termInput.Size = UDim2.new(1, -(12 + w + 8 + 12), 1, 0)
+	end
+
+	local function applyView()
+		local connected = term.state == "connected"
+		UI.termSetup.Visible = not connected
+		UI.termScroll.Visible = connected
+		UI.termRow.Visible = connected
+		if connected then
+			task.defer(function()
+				relayout()
+			end)
+		else
+			UI.termJump.Visible = false
+		end
+		UI.termStopBtn.Visible = connected
+		UI.termClearBtn.Visible = connected
+		UI.termCopyBtn.Visible = connected
+		UI.termDisconnectBtn.Visible = term.state ~= "disconnected"
+		UI.termConnectBtn.Visible = term.state == "disconnected"
+		if term.state == "connected" then
+			if term.pending > 0 then
+				UI.termStatus.Text = term.awaiting and "Waiting for approval on your PC" or "Running..."
+				UI.termStatus.TextColor3 = C.yellow
+			else
+				UI.termStatus.Text = "Connected"
+				UI.termStatus.TextColor3 = C.green
+			end
+		elseif term.state == "connecting" then
+			UI.termStatus.Text = "Connecting..."
+			UI.termStatus.TextColor3 = C.yellow
+		else
+			UI.termStatus.Text = "Disconnected"
+			UI.termStatus.TextColor3 = C.sub
+		end
+	end
+
+	local function sendMessage(tbl)
+		local sock = term.sock
+		if not sock then
+			return false
+		end
+		local ok, payload = pcall(function()
+			return httpService:JSONEncode(tbl)
+		end)
+		if not ok then
+			return false
+		end
+		return (pcall(function()
+			sock:Send(payload)
+		end))
+	end
+
+	local dl = { busy = false, api = nil, id = 0, query = "", name = "", locName = nil, installing = false, updating = false, retryAfterUpdate = false }
+
+	UI.dlBar = new("Frame", {
+		Name = "DownloadProgress",
+		Position = UDim2.new(0, 24, 0, 101),
+		Size = UDim2.new(0, 340, 0, 3),
+		BackgroundColor3 = C.dim,
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
+		Visible = false,
+	}, UI.musicPage)
+	corner(UI.dlBar, 2)
+	UI.dlBarFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0 }, UI.dlBar)
+	corner(UI.dlBarFill, 2)
+	accentize(UI.dlBarFill)
+
+	local function showProgress(frac)
+		UI.dlBar.Visible = frac ~= nil
+		if frac then
+			UI.dlBarFill.Size = UDim2.new(math.clamp(frac, 0, 1), 0, 1, 0)
+		end
+		local api = dl.api
+		if api and api.progress then
+			pcall(api.progress, frac)
+		end
+	end
+
+	local function barText(frac)
+		local filled = math.clamp(math.floor(frac * 20 + 0.5), 0, 20)
+		return "[" .. string.rep("#", filled) .. string.rep("-", 20 - filled) .. "]"
+	end
+
+	local function dlStatus(text, color)
+		local api = dl.api
+		if api then
+			pcall(api.status, text, color)
+		end
+	end
+
+	local function dlFail(text, label)
+		local api = dl.api
+		dl.busy = false
+		dl.installing = false
+		dl.updating = false
+		dl.retryAfterUpdate = false
+		showProgress(nil)
+		dl.api = nil
+		endLive()
+		push("err", (label or "Download failed: ") .. tostring(text))
+		if api then
+			pcall(api.busy, false)
+			pcall(api.status, tostring(text), C.red)
+		else
+			notify(tostring(text), "error")
+		end
+	end
+
+	local function dropMarker()
+		local name = dl.locName
+		dl.locName = nil
+		if name and delfile then
+			task.spawn(function()
+				pcall(delfile, name)
+			end)
+		end
+	end
+
+	local function sendDownload()
+		term.nextId += 1
+		dl.id = term.nextId
+		dlStatus("Sending the download request...", C.sub)
+		local cookies = settings.terminalCookies
+		if type(cookies) ~= "string" or cookies == "" then
+			cookies = nil
+		end
+		if not sendMessage({ type = "download", id = dl.id, query = dl.query, name = dl.name, dir = MUSIC_DIR, cookies = cookies }) then
+			dlFail("Could not send the request.")
+		end
+	end
+
+	local function randomText(alphabet, length)
+		local out = {}
+		for i = 1, length do
+			local k = math.random(1, #alphabet)
+			out[i] = alphabet:sub(k, k)
+		end
+		return table.concat(out)
+	end
+
+	local function startLocate()
+		local name = "bases_" .. randomText("abcdefghijklmnopqrstuvwxyz0123456789", 12) .. ".tmp"
+		local nonce = randomText("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 24)
+		if not fsWrite(name, nonce) then
+			dlFail("Could not write a temporary file to your workspace.")
+			return
+		end
+		dl.locName = name
+		term.nextId += 1
+		term.locId = term.nextId
+		dlStatus("Looking for your workspace folder...", C.sub)
+		local hint = settings.terminalRoot
+		if not sendMessage({ type = "locate", id = term.locId, name = name, nonce = nonce, hint = hint ~= "" and hint or nil }) then
+			dropMarker()
+			dlFail("Could not send the request.")
+		end
+	end
+
+	local function askInstall(missing)
+		local api = dl.api
+		dl.busy = false
+		dl.updating = false
+		dl.api = nil
+		if api then
+			pcall(api.busy, false)
+			pcall(api.close)
+		end
+		local list = type(missing) == "table" and table.concat(missing, " and ") or "yt-dlp and ffmpeg"
+		push("warn", "Missing on your PC: " .. list)
+		ov.modal({
+			title = "Install missing tools",
+			desc = "Missing: " .. list .. ". Install it now with winget? You approve it in the PowerShell window, then the download continues by itself.",
+			okText = "Install",
+			okIcon = "arrow-down-to-line",
+			onSubmit = function(_, installApi)
+				if dl.busy then
+					installApi.status("A download is already running", C.red)
+					return false
+				end
+				dl.busy = true
+				dl.installing = true
+				dl.api = installApi
+				installApi.busy(true)
+				installApi.status("Sending the install request...", C.sub)
+				term.nextId += 1
+				if not sendMessage({ type = "install", id = term.nextId }) then
+					dlFail("Could not send the request.")
+				end
+				return false
+			end,
+		})
+	end
+
+	local askUpdateRetry
+
+	local function requestSong(query, name, api)
+		query = tostring(query or ""):match("^%s*(.-)%s*$")
+		if dl.busy then
+			dl.api = api
+			api.status("A download is already running", C.red)
+			return
+		end
+		if query == "" then
+			api.status("Type a song name or paste a link", C.red)
+			return
+		end
+		if term.state ~= "connected" then
+			api.status("Connect the Terminal tab first", C.red)
+			return
+		end
+		dl.busy = true
+		dl.api = api
+		dl.query = query
+		dl.name = tostring(name or ""):match("^%s*(.-)%s*$")
+		api.busy(true)
+		push("info", "Download: " .. query)
+		if term.root then
+			sendDownload()
+		else
+			startLocate()
+		end
+	end
+
+	local function requestUpdate(api)
+		if dl.busy then
+			dl.api = api
+			api.status("Another task is running", C.red)
+			return
+		end
+		if term.state ~= "connected" then
+			api.status("Connect the Terminal tab first", C.red)
+			return
+		end
+		dl.busy = true
+		dl.updating = true
+		dl.api = api
+		api.busy(true)
+		api.status("Sending the update request...", C.sub)
+		term.nextId += 1
+		if not sendMessage({ type = "update", id = term.nextId }) then
+			dlFail("Could not send the request.", "Update failed: ")
+		end
+	end
+
+	askUpdateRetry = function()
+		ov.modal({
+			title = "Update yt-dlp and retry",
+			desc = "YouTube blocked this download. A newer yt-dlp usually fixes it. Update it now and the download is retried by itself. You approve the update in the PowerShell window.",
+			okText = "Update and retry",
+			okIcon = "arrow-rotate-right",
+			onSubmit = function(_, api)
+				if dl.busy then
+					api.status("Another task is running", C.red)
+					return false
+				end
+				requestUpdate(api)
+				if dl.updating then
+					dl.retryAfterUpdate = true
+				end
+				return false
+			end,
+		})
+	end
+
+	local function dropSocket()
+		term.session += 1
+		local sock = term.sock
+		term.sock = nil
+		if sock then
+			pcall(function()
+				sock:Close()
+			end)
+		end
+	end
+
+	local function fail(text)
+		local wasConnected = term.state == "connected"
+		dropSocket()
+		term.root = nil
+		if dl.busy then
+			dropMarker()
+			dlFail("The terminal connection was lost.")
+		end
+		term.state = "disconnected"
+		term.pending = 0
+		term.awaiting = false
+		if wasConnected then
+			push("warn", text)
+		end
+		showMessage(text, "err")
+		applyView()
+	end
+
+	local function handle(rawMessage)
+		local ok, msg = pcall(function()
+			return httpService:JSONDecode(rawMessage)
+		end)
+		if not ok or type(msg) ~= "table" then
+			return
+		end
+		local kind = msg.type
+		if kind == "ready" then
+			term.root = nil
+			term.state = "connected"
+			term.pending = 0
+			term.awaiting = false
+			term.cwd = tostring(msg.cwd or "")
+			showMessage("", "info")
+			push("ok", "Connected to " .. tostring(msg.shell or "shell") .. ". Type a command below. Use the Up and Down arrows for history.")
+			if msg.auto then
+				push("warn", "Auto-approve is ON in your PowerShell window: commands run without asking.")
+			end
+			updatePrompt()
+			applyView()
+		elseif kind == "out" then
+			if type(msg.items) == "table" then
+				for _, item in ipairs(msg.items) do
+					local kind = item.s == "err" and "err" or "out"
+					if item.r == 1 then
+						progressLine(item.t, kind, true)
+					elseif item.r == 2 then
+						progressLine(item.t, kind, false)
+					elseif item.r == 3 then
+						endLive()
+					else
+						push(kind, item.t)
+					end
+				end
+			end
+		elseif kind == "done" then
+			term.pending = math.max(0, term.pending - 1)
+			term.awaiting = false
+			if type(msg.cwd) == "string" and msg.cwd ~= "" then
+				term.cwd = msg.cwd
+				updatePrompt()
+			end
+			if msg.error then
+				push("err", msg.error)
+			elseif msg.interrupted then
+				push("warn", "Stopped.")
+			end
+			applyView()
+		elseif kind == "pending" then
+			term.awaiting = true
+			push("info", "Waiting for your approval in the PowerShell window (y / a / n)...")
+			applyView()
+		elseif kind == "denied" then
+			term.pending = math.max(0, term.pending - 1)
+			term.awaiting = false
+			push("warn", "Denied on your PC.")
+			applyView()
+		elseif kind == "info" then
+			push(msg.level == "error" and "err" or (msg.level == "warn" and "warn" or "info"), msg.message)
+		elseif kind == "located" then
+			if type(msg.root) == "string" and msg.root ~= "" then
+				term.root = msg.root
+				setSetting("terminalRoot", msg.root)
+				dropMarker()
+				if dl.busy then
+					sendDownload()
+				end
+			end
+		elseif kind == "locfail" then
+			dropMarker()
+			if dl.busy then
+				dlFail(tostring(msg.message or "Could not find the workspace folder."))
+			end
+		elseif kind == "dlstatus" then
+			if not dl.busy then
+				return
+			end
+			if msg.stage == "waiting" then
+				dlStatus("Waiting for your approval in the PowerShell window (y / a / n)...", C.yellow)
+			elseif msg.stage == "starting" then
+				dlStatus("Starting yt-dlp...", C.sub)
+				showProgress(0)
+				progressLine("Starting yt-dlp...", "info", true)
+			elseif msg.stage == "retry" then
+				local text = tostring(msg.text or "Trying another method...")
+				dlStatus(text, C.yellow)
+				endLive()
+				push("warn", text)
+				showProgress(0)
+			elseif msg.stage == "downloading" then
+				local pct = math.clamp(math.floor(tonumber(msg.percent) or 0), 0, 100)
+				local extra = {}
+				if msg.size then
+					extra[#extra + 1] = tostring(msg.size)
+				end
+				if msg.speed then
+					extra[#extra + 1] = tostring(msg.speed)
+				end
+				if msg.eta then
+					extra[#extra + 1] = "ETA " .. tostring(msg.eta)
+				end
+				local tail = #extra > 0 and ("  " .. table.concat(extra, "  ")) or ""
+				dlStatus(string.format("Downloading... %d%%", pct) .. (#extra > 0 and (" (" .. table.concat(extra, ", ") .. ")") or ""), C.sub)
+				showProgress(pct / 100)
+				progressLine("Downloading " .. barText(pct / 100) .. string.format(" %d%%", pct) .. tail, "info", true)
+			elseif msg.stage == "converting" then
+				dlStatus("Converting to mp3...", C.sub)
+				showProgress(1)
+				progressLine("Converting to mp3...", "info", true)
+			elseif msg.stage == "tagging" then
+				dlStatus("Adding tags and cover art...", C.sub)
+				showProgress(1)
+				progressLine("Adding tags and cover art...", "info", true)
+			end
+		elseif kind == "dldone" then
+			local api = dl.api
+			dl.busy = false
+			dl.api = nil
+			local file = tostring(msg.file or "song.mp3")
+			showProgress(nil)
+			progressLine("Downloaded " .. file, "ok", false)
+			if api then
+				pcall(api.busy, false)
+				pcall(api.close)
+			end
+			if rescanMusic then
+				rescanMusic()
+			end
+			notify("Saved " .. file .. " to your music library", "success")
+		elseif kind == "dlerror" then
+			if dl.busy then
+				if msg.code == "notools" then
+					askInstall(msg.missing)
+				else
+					if type(msg.detail) == "table" then
+						for _, line in ipairs(msg.detail) do
+							push("warn", "yt-dlp: " .. tostring(line))
+						end
+					end
+					dlFail(tostring(msg.message or "The download failed."))
+					if msg.code == "outdated" then
+						askUpdateRetry()
+					end
+				end
+			end
+		elseif kind == "inststatus" then
+			if dl.busy and dl.installing then
+				dlStatus(tostring(msg.text or "Installing..."), msg.stage == "waiting" and C.yellow or C.sub)
+			end
+		elseif kind == "instdone" then
+			if dl.busy and dl.installing then
+				dl.installing = false
+				local installed = type(msg.installed) == "table" and #msg.installed or 0
+				push("ok", installed > 0 and ("Installed: " .. table.concat(msg.installed, ", ")) or "The tools were already installed.")
+				dlStatus("Tools ready. Downloading...", C.sub)
+				if term.root then
+					sendDownload()
+				else
+					startLocate()
+				end
+			end
+		elseif kind == "updstatus" then
+			if dl.busy and dl.updating then
+				dlStatus(tostring(msg.text or "Updating..."), msg.stage == "waiting" and C.yellow or C.sub)
+			end
+		elseif kind == "updone" then
+			if dl.busy and dl.updating then
+				local api = dl.api
+				dl.busy = false
+				dl.updating = false
+				dl.api = nil
+				local after = tostring(msg.after or "unknown")
+				local text = msg.changed and ("Updated yt-dlp from " .. tostring(msg.before) .. " to " .. after) or ("yt-dlp is already up to date (" .. after .. ")")
+				push("ok", text)
+				if dl.retryAfterUpdate then
+					dl.retryAfterUpdate = false
+					dl.busy = true
+					dl.api = api
+					if api then
+						pcall(api.status, text .. ". Retrying the download...", C.sub)
+					end
+					push("info", "Retrying: " .. dl.query)
+					if term.root then
+						sendDownload()
+					else
+						startLocate()
+					end
+					return
+				end
+				if api then
+					pcall(api.busy, false)
+					pcall(api.status, text, C.green)
+				end
+				notify(text, "success")
+			end
+		elseif kind == "upderror" then
+			if dl.busy and dl.updating then
+				if msg.code == "notools" then
+					askInstall({ "yt-dlp" })
+				else
+					dlFail(tostring(msg.message or "The update failed."), "Update failed: ")
+				end
+			end
+		elseif kind == "insterror" then
+			if dl.busy and dl.installing then
+				dlFail(tostring(msg.message or "The install failed."))
+			end
+		elseif kind == "authfail" then
+			fail(tostring(msg.message or "Wrong token."))
+		elseif kind == "error" then
+			fail(tostring(msg.message or "The server refused the connection."))
+		end
+	end
+
+	local function connect()
+		if term.state ~= "disconnected" then
+			return
+		end
+		local connectFn = WebSocket and WebSocket.connect
+		if not connectFn then
+			showMessage("Your executor does not support WebSocket.connect.", "err")
+			return
+		end
+		local port = tonumber(UI.termPort.Text)
+		if not port or port < 1 or port > 65535 or port % 1 ~= 0 then
+			showMessage("Enter a valid port between 1 and 65535.", "err")
+			return
+		end
+		local token = UI.termToken.Text:match("^%s*(.-)%s*$")
+		if token == "" then
+			showMessage("Enter the token printed in the PowerShell window.", "err")
+			return
+		end
+		setSetting("terminalPort", tostring(port))
+		term.session += 1
+		local session = term.session
+		term.state = "connecting"
+		showMessage("Connecting to 127.0.0.1:" .. port .. "...", "warn")
+		applyView()
+		task.spawn(function()
+			local ok, sock = pcall(connectFn, "ws://127.0.0.1:" .. port)
+			local firstError = (not ok) and tostring(sock) or nil
+			if (not ok or not sock) and term.session == session then
+				ok, sock = pcall(connectFn, "ws://localhost:" .. port)
+			end
+			if term.session ~= session then
+				if ok and sock then
+					pcall(function()
+						sock:Close()
+					end)
+				end
+				return
+			end
+			if not ok or not sock then
+				local reason = firstError or (not ok and tostring(sock)) or "no socket returned"
+				fail("Could not reach 127.0.0.1:" .. port .. " (" .. reason:sub(1, 160) .. "). Make sure node index.js is running in PowerShell and the port matches. Rejected connections are printed in the PowerShell window.")
+				return
+			end
+			term.sock = sock
+			pcall(function()
+				sock.OnMessage:Connect(function(message)
+					if term.session == session then
+						handle(message)
+					end
+				end)
+			end)
+			pcall(function()
+				sock.OnClose:Connect(function()
+					if term.session == session and term.state ~= "disconnected" then
+						fail("Connection closed.")
+					end
+				end)
+			end)
+			if not sendMessage({ type = "auth", token = token }) then
+				fail("Could not send data to the server.")
+				return
+			end
+			task.delay(8, function()
+				if term.session == session and term.state == "connecting" then
+					fail("The server did not answer. Check the port and the token.")
+				end
+			end)
+		end)
+	end
+
+	local function disconnect()
+		if term.state == "disconnected" then
+			return
+		end
+		local wasConnected = term.state == "connected"
+		dropSocket()
+		term.root = nil
+		if dl.busy then
+			dropMarker()
+			dlFail("The terminal was disconnected.")
+		end
+		term.state = "disconnected"
+		term.pending = 0
+		term.awaiting = false
+		if wasConnected then
+			push("info", "Disconnected.")
+		end
+		showMessage("", "info")
+		applyView()
+	end
+
+	local function submit(text)
+		text = tostring(text or ""):match("^%s*(.-)%s*$")
+		if text == "" then
+			return
+		end
+		local history = term.history
+		if history[#history] ~= text then
+			history[#history + 1] = text
+			while #history > math.max(10, num(settings.terminalHistory, 100)) do
+				table.remove(history, 1)
+			end
+		end
+		term.histPos = #history + 1
+		local lowered = text:lower()
+		if lowered == "clear" or lowered == "cls" then
+			clearOutput()
+			return
+		end
+		if term.state ~= "connected" then
+			notify("The terminal is not connected", "warn")
+			return
+		end
+		term.nextId += 1
+		view.stick = true
+		if settings.terminalEcho then
+			push("cmd", "PS " .. term.cwd .. "> " .. text)
+		else
+			flush()
+		end
+		if sendMessage({ type = "run", id = term.nextId, command = text }) then
+			term.pending += 1
+			applyView()
+		else
+			push("err", "Could not send the command.")
+		end
+	end
+
+	local function takeInput()
+		local text = UI.termInput.Text
+		UI.termInput.Text = ""
+		submit(text)
+	end
+
+	UI.termInput.FocusLost:Connect(function(enter)
+		if enter then
+			takeInput()
+			task.defer(function()
+				if term.state == "connected" and UI.terminalPage.Visible then
+					UI.termInput:CaptureFocus()
+				end
+			end)
+		end
+	end)
+	UI.termInput.InputBegan:Connect(function(input)
+		local history = term.history
+		if input.KeyCode == Enum.KeyCode.Up then
+			if #history > 0 then
+				term.histPos = math.max(1, term.histPos - 1)
+				UI.termInput.Text = history[term.histPos]
+				UI.termInput.CursorPosition = #UI.termInput.Text + 1
+			end
+		elseif input.KeyCode == Enum.KeyCode.Down then
+			if term.histPos < #history then
+				term.histPos += 1
+				UI.termInput.Text = history[term.histPos]
+			else
+				term.histPos = #history + 1
+				UI.termInput.Text = ""
+			end
+			UI.termInput.CursorPosition = #UI.termInput.Text + 1
+		end
+	end)
+	UI.termRunBtn.MouseButton1Click:Connect(takeInput)
+	UI.termConnectBtn.MouseButton1Click:Connect(connect)
+	UI.termToken.FocusLost:Connect(function(enter)
+		if enter then
+			connect()
+		end
+	end)
+	UI.termDisconnectBtn.MouseButton1Click:Connect(disconnect)
+	UI.termStopBtn.MouseButton1Click:Connect(function()
+		if term.state == "connected" then
+			sendMessage({ type = "interrupt" })
+		end
+	end)
+	UI.termClearBtn.MouseButton1Click:Connect(clearOutput)
+	UI.termJump.MouseButton1Click:Connect(function()
+		scrollToBottom()
+		render()
+		updateJump()
+	end)
+	UI.termCopyBtn.MouseButton1Click:Connect(function()
+		if setclipboard then
+			pcall(setclipboard, outputText())
+			notify("Terminal output copied", "success")
+		else
+			notify("setclipboard is not supported by your executor", "warn")
+		end
+	end)
+
+	local function copyText(text, label)
+		if setclipboard then
+			pcall(setclipboard, text)
+			notify(label .. " copied", "success")
+		else
+			notify("setclipboard is not supported by your executor", "warn")
+		end
+	end
+	UI.termCopySrcBtn.MouseButton1Click:Connect(function()
+		copyText(TERMINAL_JS, "index.js source")
+	end)
+	UI.termCopyCmdBtn.MouseButton1Click:Connect(function()
+		copyText("node index.js", "Command")
+	end)
+	UI.termCopyLinkBtn.MouseButton1Click:Connect(function()
+		copyText(TERMINAL_JS_URL, "Download link")
+	end)
+	UI.termSaveBtn.MouseButton1Click:Connect(function()
+		if not hasFS then
+			notify("Your executor has no file system support", "warn")
+			return
+		end
+		task.spawn(function()
+			local source = TERMINAL_JS
+			if TERMINAL_JS_URL ~= "" then
+				local ok, data = pcall(function()
+					return game:HttpGet(TERMINAL_JS_URL)
+				end)
+				if ok and type(data) == "string" and #data > 200 then
+					source = data
+				end
+			end
+			fsEnsure(TERM_DIR)
+			if fsWrite(TERM_DIR .. "/index.js", source) then
+				showMessage("Saved " .. TERM_DIR .. "/index.js in your executor's workspace folder.", "ok")
+				notify("Saved " .. TERM_DIR .. "/index.js", "success")
+			else
+				showMessage("Could not save index.js. Use Copy Source and paste it into a new file named index.js.", "err")
+				notify("Could not save index.js", "error")
+			end
+		end)
+	end)
+
+	UI.musicYtBtn.MouseButton1Click:Connect(function()
+		if not hasFS then
+			notify("Your executor has no file system support", "warn")
+			return
+		end
+		if term.state ~= "connected" and not dl.busy then
+			notify("Connect the Terminal tab first. It runs yt-dlp on your PC.", "warn")
+			return
+		end
+		ov.modal({
+			title = "Download song with yt-dlp",
+			desc = "Paste a link or type a song name. Press Update if downloads stop working. The mp3 is saved to your music library.",
+			fields = {
+				{ key = "query", placeholder = "Link or song name..." },
+				{ key = "name", placeholder = "Save as (optional)" },
+			},
+			okText = "Download",
+			okIcon = "arrow-down-to-line",
+			extraText = "Update",
+			extraIcon = "arrow-rotate-right",
+			onExtra = function(api)
+				requestUpdate(api)
+			end,
+			onSubmit = function(values, api)
+				requestSong(values.query, values.name, api)
+				return false
+			end,
+		})
+	end)
+
+	UI.termScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+		render()
+		updateJump()
+	end)
+	UI.termScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		view.resizeToken = view.resizeToken + 1
+		local mine = view.resizeToken
+		task.delay(0.15, function()
+			if running and mine == view.resizeToken then
+				relayout()
+			end
+		end)
+	end)
+
+	UI.termApi = {
+		clear = clearOutput,
+		update = function()
+			if term.state ~= "connected" then
+				notify("Connect the Terminal tab first. It runs the update on your PC.", "warn")
+				return
+			end
+			ov.modal({
+				title = "Update yt-dlp",
+				desc = "Updates yt-dlp with winget, or with yt-dlp -U if winget cannot. You approve it in the PowerShell window.",
+				okText = "Update",
+				okIcon = "arrow-rotate-right",
+				onSubmit = function(_, api)
+					requestUpdate(api)
+					return false
+				end,
+			})
+		end,
+	}
+
+	bind("terminalFontSize", applyFontSetting)
+	bind("terminalMaxLines", function()
+		flush()
+	end, true)
+	bind("terminalAutoscroll", function(on)
+		if on then
+			view.stick = false
+		end
+	end, true)
+
+	onCleanup(function()
+		dropSocket()
+	end)
+
+	applyView()
+	updatePrompt()
+end
+
+
+UI.settingsPage = new("ScrollingFrame", {
+	Name = "SettingsPage",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	Visible = false,
+}, UI.pageContainer)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 0) }, UI.settingsPage)
+padding(UI.settingsPage, 16, 24, 24, 24)
+
+UI.rows = { page = UI.settingsPage, order = 0 }
+local function nextOrder()
+	UI.rows.order += 1
+	return UI.rows.order
+end
+
+local function createSection(name)
+	local header = sectionHeader(name, UI.rows.page, nextOrder())
+	header.Size = UDim2.new(1, 0, 0, 52)
+	padding(header, 22, 0, 0, 0)
+end
+
+UI.setStyle = { off = Color3.new(0.22, 0.22, 0.26), line = Color3.new(1, 1, 1) }
+
+local function card(height)
+	local f = new("Frame", { Size = UDim2.new(1, 0, 0, height), BackgroundTransparency = 1, BorderSizePixel = 0, LayoutOrder = nextOrder() }, UI.rows.page)
+	new("Frame", { Name = "Divider", Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = UI.setStyle.line, BackgroundTransparency = 0.92, BorderSizePixel = 0 }, f)
+	return f
+end
+
+local function rowTitle(row, titleText, desc, rightPad, icon)
+	local ic = newIcon(row, icon or { "diamond-simplified" }, false, 22, C.sub)
+	ic.Position = UDim2.new(0, 0, 0.5, -13)
+	local title = new("TextLabel", {
+		Size = UDim2.new(1, -(rightPad + 44), 0, desc and 22 or row.Size.Y.Offset - 1),
+		Position = UDim2.new(0, 44, 0, desc and 15 or 0),
+		BackgroundTransparency = 1,
+		Text = titleText,
+		TextColor3 = C.text,
+		TextSize = 16,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	if desc then
+		new("TextLabel", {
+			Size = UDim2.new(1, -(rightPad + 44), 0, 18),
+			Position = UDim2.new(0, 44, 0, 39),
+			BackgroundTransparency = 1,
+			Text = desc,
+			TextColor3 = C.sub,
+			TextSize = 12,
+			FontFace = sans(Enum.FontWeight.Regular),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, row)
+	end
+	return title, ic
+end
+
+function UI.outlineButton(parent, w, h, text, leftAligned)
+	local btn = new("TextButton", {
+		Size = UDim2.new(0, w, 0, h),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = text or "",
+		TextColor3 = C.text,
+		TextSize = 15,
+		FontFace = sans(),
+		TextXAlignment = leftAligned and Enum.TextXAlignment.Left or Enum.TextXAlignment.Center,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, parent)
+	corner(btn, 8)
+	local stroke = new("UIStroke", { Color = UI.setStyle.line, Transparency = 0.72, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, btn)
+	btn.MouseEnter:Connect(function()
+		stroke.Transparency = 0.45
+	end)
+	btn.MouseLeave:Connect(function()
+		stroke.Transparency = 0.72
+	end)
+	return btn, stroke
+end
+
+local function createToggle(titleText, key, desc, icon)
+	local row = card(desc and 76 or 64)
+	local _, ic = rowTitle(row, titleText, desc, 80, icon)
+	local toggleBtn = new("ImageButton", {
+		Size = UDim2.new(0, 46, 0, 26),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, 0, 0.5, 0),
+		BackgroundColor3 = UI.setStyle.off,
+		AutoButtonColor = false,
+	}, row)
+	corner(toggleBtn, 13)
+	local dot = new("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10), BackgroundColor3 = C.text, BorderSizePixel = 0 }, toggleBtn)
+	corner(dot, 10)
+	local check = newIcon(dot, { "check", "circle-check" }, true, 14, accent())
+	check.AnchorPoint = Vector2.new(0.5, 0.5)
+	check.Position = UDim2.new(0.5, 0, 0.5, 0)
+	check.TextTransparency = 1
+
+	local function paint(x, v)
+		local p = math.clamp((x - 3) / 20, 0, 1)
+		dot.Position = UDim2.new(0, x, 0.5, -10)
+		dot.Size = UDim2.new(0, 20 + math.min(6, math.abs(v or 0) * 0.02), 0, 20)
+		toggleBtn.BackgroundColor3 = UI.setStyle.off:Lerp(accent(), p)
+		check.TextColor3 = accent()
+		check.TextTransparency = 1 - p
+	end
+	local knob = UI.anim.spring(settings[key] and 23 or 3, paint, 30, 0.74, 0.02)
+	local function visual(on, animate)
+		local goalX = on and 23 or 3
+		ic.FontFace = iconFont(on)
+		ic.TextColor3 = on and C.text or C.sub
+		if animate and UI.anim.enabled() then
+			knob.to(goalX)
+		elseif animate then
+			knob.cancel(goalX)
+			dot.Size = UDim2.new(0, 20, 0, 20)
+			check.TextColor3 = accent()
+			local info = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+			tweenService:Create(toggleBtn, info, { BackgroundColor3 = on and accent() or UI.setStyle.off }):Play()
+			tweenService:Create(dot, info, { Position = UDim2.new(0, goalX, 0.5, -10) }):Play()
+			tweenService:Create(check, info, { TextTransparency = on and 0 or 1 }):Play()
+		else
+			knob.snap(goalX)
+		end
+	end
+	local clicking = false
+	toggleBtn.MouseButton1Click:Connect(function()
+		clicking = true
+		setSetting(key, not settings[key])
+		clicking = false
+		visual(settings[key], true)
+	end)
+	bind(key, function(v)
+		if not clicking then
+			visual(v, false)
+		end
+	end)
+	bind("accent", function()
+		visual(settings[key], false)
+	end, true)
+end
+
+local function createSlider(titleText, key, minV, maxV, step, fmt, icon)
+	local row = card(92)
+	rowTitle(row, titleText, nil, 270, icon)
+	local valueLabel = new("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Size = UDim2.new(0, 216, 0, 18),
+		Position = UDim2.new(1, -12, 0, 12),
+		BackgroundTransparency = 1,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+	local trackBar = new("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 40), Size = UDim2.new(0, 216, 0, 8), BackgroundColor3 = UI.setStyle.off, BorderSizePixel = 0 }, row)
+	corner(trackBar, 4)
+	local fill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = accent(), BorderSizePixel = 0 }, trackBar)
+	corner(fill, 4)
+	local knob = new("Frame", { Size = UDim2.new(0, 22, 0, 22), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0), BackgroundColor3 = C.text, BorderSizePixel = 0 }, trackBar)
+	corner(knob, 11)
+	new("TextLabel", {
+		Name = "MinLabel",
+		Size = UDim2.new(0, 100, 0, 16),
+		Position = UDim2.new(1, -228, 0, 58),
+		BackgroundTransparency = 1,
+		Text = fmt(minV),
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, row)
+	new("TextLabel", {
+		Name = "MaxLabel",
+		AnchorPoint = Vector2.new(1, 0),
+		Size = UDim2.new(0, 100, 0, 16),
+		Position = UDim2.new(1, -12, 0, 58),
+		BackgroundTransparency = 1,
+		Text = fmt(maxV),
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, row)
+	local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 28), Size = UDim2.new(0, 240, 0, 32) }, row)
+
+	local glide = UI.anim.spring(0, function(a)
+		a = math.clamp(a, 0, 1)
+		fill.Size = UDim2.new(a, 0, 1, 0)
+		knob.Position = UDim2.new(a, 0, 0.5, 0)
+	end, 46, 1, 0.0008)
+	local function visual(v)
+		local a = math.clamp((v - minV) / (maxV - minV), 0, 1)
+		if UI.anim.enabled() then
+			glide.to(a)
+		else
+			glide.snap(a)
+		end
+		fill.BackgroundColor3 = accent()
+		valueLabel.Text = fmt(v)
+	end
+	local function setFromX(x)
+		local a = math.clamp((x - trackBar.AbsolutePosition.X) / math.max(trackBar.AbsoluteSize.X, 1), 0, 1)
+		local v = minV + a * (maxV - minV)
+		v = math.floor(v / step + 0.5) * step
+		v = tonumber(string.format("%.4f", math.clamp(v, minV, maxV)))
+		if v ~= settings[key] then
+			setSetting(key, v)
+		end
+	end
+	hit.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			env.BasesSliderDrag = setFromX
+			setFromX(input.Position.X)
+		end
+	end)
+	bind(key, visual)
+	bind("accent", function()
+		visual(settings[key])
+	end, true)
+end
+
+local function createChoice(titleText, key, options, icon)
+	local row = card(68)
+	rowTitle(row, titleText, nil, 250, icon)
+	local menu = #options >= 3
+	local btn = UI.outlineButton(row, 230, 44, "", menu)
+	if menu then
+		padding(btn, 0, 44, 0, 14)
+		local chevron = newIcon(btn, { "chevron-large-down", "chevron-small-down" }, false, 18, C.text)
+		chevron.AnchorPoint = Vector2.new(0, 0.5)
+		chevron.Position = UDim2.new(1, 14, 0.5, 0)
+	end
+	local function labelFor(v)
+		for _, o in ipairs(options) do
+			if o.value == v then
+				return o.label
+			end
+		end
+		return tostring(v)
+	end
+	btn.MouseButton1Click:Connect(function()
+		if menu then
+			ov.dropdown(btn, options, settings[key], function(value)
+				setSetting(key, value)
+			end, { minWidth = 230 })
+			return
+		end
+		local idx = 1
+		for i, o in ipairs(options) do
+			if o.value == settings[key] then
+				idx = i
+				break
+			end
+		end
+		setSetting(key, options[(idx % #options) + 1].value)
+	end)
+	bind(key, function(v)
+		btn.Text = labelFor(v)
+	end)
+end
+
+local capturingKey = nil
+local function createKeybind(titleText, key, icon)
+	local row = card(68)
+	rowTitle(row, titleText, nil, 170, icon)
+	local btn = UI.outlineButton(row, 150, 40, "", false)
+	btn.MouseButton1Click:Connect(function()
+		btn.Text = "Press a key..."
+		capturingKey = function(kc)
+			capturingKey = nil
+			if kc then
+				setSetting(key, kc.Name)
+			else
+				btn.Text = settings[key]
+			end
+		end
+	end)
+	bind(key, function(v)
+		btn.Text = v
+	end)
+end
+
+local function createAction(titleText, btnText, callback, desc, icon)
+	local row = card(desc and 76 or 64)
+	rowTitle(row, titleText, desc, 170, icon)
+	local btn = UI.outlineButton(row, 150, 40, btnText, false)
+	btn.MouseButton1Click:Connect(callback)
+end
+
+UI.build = { toggle = createToggle, slider = createSlider, action = createAction, section = createSection, choice = createChoice }
+
+local pctFmt = function(v)
+	return string.format("%d%%", math.floor(v * 100 + 0.5))
+end
+
+createSection("General Connection")
+createToggle("Anti Idle Protocol", "antiIdle", "Simulates input so you are not kicked for idling", { "moon" })
+createToggle("Unlock Frame Rate", "unlockFps", "Uses the FPS cap below (needs setfpscap support)", { "speedometer" })
+createSlider("FPS Cap", "fpsCap", 30, 360, 10, function(v)
+	return v .. " FPS"
+end, { "speedometer" })
+createChoice("Notification Duration", "notifyDuration", { { label = "3 seconds", value = 3 }, { label = "5 seconds", value = 5 }, { label = "8 seconds", value = 8 }, { label = "12 seconds", value = 12 } }, { "bell-clock" })
+createToggle("Confirm Hub Executions", "confirmHub", "Asks for a second click before running a hub script", { "shield-check" })
+
+createSection("Editor")
+createToggle("Syntax Highlighting", "highlight", "Switches off automatically for very large scripts", { "code" })
+createChoice("Color Theme", "theme", (function()
+	local opts = {}
+	for i, t in ipairs(themes) do
+		opts[i] = { label = t.name, value = i }
+	end
+	return opts
+end)(), { "paint-brush" })
+createSlider("Font Size", "fontSize", 10, 24, 1, function(v)
+	return v .. " px"
+end, { "text-uppercase-a-lowercase-a" })
+createSlider("Editor Height", "editorHeight", 200, 420, 10, function(v)
+	return v .. " px"
+end, { "dual-arrows-vertical" })
+createChoice("Indent Size", "tabSize", { { label = "2 spaces", value = 2 }, { label = "4 spaces", value = 4 }, { label = "8 spaces", value = 8 } }, { "four-bars-horizontal-chevron-right" })
+createToggle("Auto Indent", "autoIndent", "Keeps indentation on Enter and dedents end / else / }", { "four-bars-horizontal-chevron-left" })
+createToggle("Auto Close Brackets & Quotes", "autoClose", nil, { "square-code" })
+createToggle("Line Numbers", "lineNumbers", nil, { "list-numbered" })
+createToggle("Highlight Current Line", "highlightLine", "Tints the active line and brightens its line number", { "line-horizontal" })
+createToggle("Indent Guides", "indentGuides", "Thin vertical lines that show indentation levels", { "ruler" })
+createToggle("Bracket Matching", "bracketMatch", "Highlights the bracket that pairs with the one next to your cursor", { "chain-link" })
+createToggle("Error Indicators", "errorIndicators", "Underlines the line that fails to compile and shows the error in the status bar", { "triangle-exclamation" })
+createToggle("Blinking Caret", "caretBlink", "Makes the text cursor blink while the editor is focused", { "cursor" })
+createToggle("Status Bar", "statusBar", nil, { "frame-single-bar-horizontal" })
+createToggle("Auto Save", "autoSave", "Writes changed scripts to " .. FOLDER, { "floppy-disk" })
+createChoice("Auto Save Interval", "autoSaveInterval", { { label = "1 second", value = 1 }, { label = "3 seconds", value = 3 }, { label = "10 seconds", value = 10 }, { label = "30 seconds", value = 30 } }, { "clock" })
+createToggle("Trim Whitespace On Save", "trimOnSave", "Removes trailing spaces in the saved file", { "eraser" })
+createToggle("Confirm Before Deleting Tabs", "confirmDelete", nil, { "trash-can" })
+createKeybind("Execute Keybind", "execKey", { "keyboard" })
+
+createSection("Script Hub")
+createChoice("Results Per Search", "hubMax", { { label = "20", value = 20 }, { label = "50", value = 50 }, { label = "100", value = 100 } }, { "list-bulleted" })
+createToggle("Load Thumbnails", "hubThumbs", "Turn off to save bandwidth", { "image" })
+createToggle("Hide Key-System Scripts", "hideKey", nil, { "lock-closed" })
+createToggle("Hide Patched Scripts", "hidePatched", nil, { "bug" })
+createToggle("Verified Scripts Only", "verifiedOnly", nil, { "verified-check" })
+createAction("Thumbnail Cache", "Clear Cache", function()
+	if not hasFS then
+		notify("Your executor has no file system support", "warn")
+		return
+	end
+	local count = 0
+	pcall(function()
+		for _, e in ipairs(fsList(THUMBS_DIR)) do
+			if not e.isDir and pcall(delfile, e.path) then
+				count += 1
+			end
+		end
+	end)
+	notify("Removed " .. count .. " cached thumbnail(s)", "success")
+end, nil, { "trash-can" })
+
+createSection("Workspace")
+createChoice("Sort Files By", "wsSort", { { label = "Name A-Z", value = 1 }, { label = "Type", value = 2 }, { label = "Name Z-A", value = 3 } }, { "two-arrows-down-and-up" })
+createToggle("Show File Previews", "wsPreview", "Reads the start of a file when you select it", { "eye" })
+createToggle("Confirm Deletes", "wsConfirm", "Asks for a second click before deleting a file or folder", { "shield-check" })
+
+createSection("Music")
+createToggle("Autoplay Next Song", "musicAutoNext", "Keeps playing when a song ends", { "skip-next-small" })
+createChoice("Fade In", "musicFade", { { label = "Off", value = 0 }, { label = "1 second", value = 1 }, { label = "2 seconds", value = 2 }, { label = "3 seconds", value = 3 } }, { "arrow-progress-up" })
+createChoice("Sort Songs By", "musicSort", { { label = "Name A-Z", value = 1 }, { label = "Name Z-A", value = 2 }, { label = "Folder", value = 3 } }, { "two-arrows-down-and-up" })
+createSlider("Default Playback Speed", "musicSpeed", 0.25, 3, 0.05, function(v)
+	return string.format("%gx", v)
+end, { "speedometer" })
+createToggle("Keep Pitch When Speed Changes", "musicKeepPitch", "Compensates the pitch shift caused by playback speed", { "three-sliders-horizontal" })
+createSlider("Custom Sleep Default", "musicSleepDefault", 5, 180, 5, function(v)
+	return v .. " min"
+end, { "moon" })
+createToggle("Fade Out On Sleep", "musicSleepFade", "Lowers the volume for 3 seconds before pausing", { "arrow-progress-up" })
+createToggle("Read Song Tags", "musicTags", "Shows title, artist, album and quality from the file tags", { "tag" })
+createToggle("Show Cover Art", "musicCover", "Shows the embedded cover and keeps a copy in workspace/" .. ROOT .. "/Music Art", { "image" })
+createToggle("Song Change Notifications", "musicNotify", "Shows a notification for every new song", { "bell" })
+createToggle("Continue Playing", "musicContinue", "Resumes your song where it stopped after rejoining or reloading, if it was playing", { "arrow-rotate-right" })
+createToggle("Remember Last Song", "musicResume", "Selects your last song on start without playing it", { "play-small" })
+createKeybind("Play / Pause Key", "musicPlayKey", { "keyboard" })
+createKeybind("Next Song Key", "musicNextKey", { "keyboard" })
+createKeybind("Previous Song Key", "musicPrevKey", { "keyboard" })
+createAction("Rescan Library", "Rescan", function()
+	rescanMusic()
+	notify("Found " .. #musicTracks .. " song(s)", "success")
+end, "Looks for new files in workspace/" .. MUSIC_DIR, { "arrow-rotate-right" })
+createAction("Cover Cache", "Clear", function()
+	UI.meta.clearCovers()
+	refreshNowPlaying()
+	notify("Cleared saved cover art", "success")
+end, "Deletes the cover images saved from your songs", { "image" })
+createAction("Recently Played", "Clear", function()
+	setSetting("musicRecent", {})
+	setSetting("musicLast", "")
+	refreshMusicList()
+	notify("Cleared recently played songs", "success")
+end, nil, { "clock" })
+createAction("Favorite Songs", "Clear", function()
+	setSetting("musicFavorites", {})
+	rebuildFavSet()
+	refreshMusicList()
+	refreshNowPlaying()
+	notify("Cleared favorite songs", "success")
+end, nil, { "heart" })
+
+createSection("Lyrics")
+createToggle("Online Lyrics", "lyricsOnline", "Looks up lyrics on LRCLIB with the song title and artist, only when you open the lyrics view", { "globe-simplified" })
+createToggle("Animated Lyrics", "lyricsAnim", "Word lift, line pop and entry motion. Off keeps a simple highlight", { "flame" })
+createSlider("Lyrics Text Size", "lyricsSize", 14, 36, 1, function(v)
+	return v .. " px"
+end, { "text-uppercase-a-lowercase-a" })
+createSlider("Lyrics Sync Offset", "lyricsOffset", -2000, 2000, 50, function(v)
+	return string.format("%+.2f s", v / 1000)
+end, { "clock" })
+createAction("Saved Lyrics", "Clear", function()
+	local count = 0
+	pcall(function()
+		for _, e in ipairs(fsList(UI.lyrics.dir)) do
+			if not e.isDir and pcall(delfile, e.path) then
+				count += 1
+			end
+		end
+	end)
+	UI.lyrics.view.cache, UI.lyrics.view.cacheCount = {}, 0
+	notify("Removed " .. count .. " saved lyric file(s)", "success")
+end, "Deletes lyrics downloaded from LRCLIB (your own .lrc files are not touched)", { "trash-can" })
+
+createSection("Players")
+createChoice("Refresh Rate", "playerRefresh", { { label = "0.5 seconds", value = 0.5 }, { label = "1 second", value = 1 }, { label = "2 seconds", value = 2 }, { label = "5 seconds", value = 5 } }, { "arrow-spin-clockwise" })
+createChoice("Sort Players By", "playerSort", { { label = "Username", value = 1 }, { label = "Display Name", value = 2 }, { label = "Distance", value = 3 } }, { "two-arrows-down-and-up" })
+createToggle("Show Display Names", "playerDisplayNames", nil, { "person" })
+createToggle("Show Distance", "playerDistance", nil, { "ruler" })
+createSlider("Teleport Offset", "tpOffset", 0, 15, 1, function(v)
+	return v .. " studs"
+end, { "person-teleport" })
+createSlider("Follow Distance", "followDistance", 3, 30, 1, function(v)
+	return v .. " studs"
+end, { "person-walking" })
+do
+	local opts = {}
+	for i, o in ipairs(hlColorOptions) do
+		opts[i] = { label = o.label, value = o.value }
+	end
+	createChoice("Highlight Color", "hlColor", opts, { "paint-brush" })
+end
+createSlider("Highlight Fill Fade", "hlFill", 0, 1, 0.05, function(v)
+	return pctFmt(v)
+end, { "paint-bucket" })
+
+createSection("Console")
+createToggle("Capture Output", "consoleCapture", "Turn off to stop collecting log messages", { "teletype" })
+createToggle("Auto Scroll", "consoleAutoscroll", nil, { "chevron-large-down" })
+createChoice("History Size", "consoleMax", { { label = "100 lines", value = 100 }, { label = "300 lines", value = 300 }, { label = "600 lines", value = 600 }, { label = "2,000 lines", value = 2000 }, { label = "10,000 lines", value = 10000 } }, { "rectangle-list" })
+createSlider("Font Size", "consoleFontSize", 10, 20, 1, function(v)
+	return v .. " px"
+end, { "text-uppercase-a-lowercase-a" })
+
+createSection("Terminal")
+createSlider("Font Size", "terminalFontSize", 10, 20, 1, function(v)
+	return v .. " px"
+end, { "text-uppercase-a-lowercase-a" })
+createChoice("Output Limit", "terminalMaxLines", { { label = "1,000 lines", value = 1000 }, { label = "5,000 lines", value = 5000 }, { label = "10,000 lines", value = 10000 }, { label = "20,000 lines", value = 20000 } }, { "rectangle-list" })
+createToggle("Auto Scroll", "terminalAutoscroll", "Follows new output while you are at the bottom", { "chevron-large-down" })
+createToggle("Echo Commands", "terminalEcho", "Shows each command you send in the output", { "teletype" })
+createChoice("Command History", "terminalHistory", { { label = "50 commands", value = 50 }, { label = "100 commands", value = 100 }, { label = "200 commands", value = 200 }, { label = "500 commands", value = 500 } }, { "clock" })
+createAction("Terminal Output", "Clear", function()
+	if UI.termApi then
+		UI.termApi.clear()
+	end
+	notify("Cleared the terminal output", "success")
+end, nil, { "trash-can" })
+createChoice("Browser Cookies", "terminalCookies", { { label = "Off", value = "" }, { label = "Chrome", value = "chrome" }, { label = "Edge", value = "edge" }, { label = "Firefox", value = "firefox" }, { label = "Brave", value = "brave" } }, { "key" })
+createAction("yt-dlp", "Update", function()
+	if UI.termApi then
+		UI.termApi.update()
+	end
+end, "Updates the song downloader tool on your PC", { "arrow-rotate-right" })
+
+createSection("Interface Preferences")
+createToggle("Hide Executed Notifications", "hideNotifs", "Errors are always shown", { "bell-slash" })
+createToggle("Topmost Hub Window", "topmost", "Draws the hub above other UI", { "stacked-squares-arrow-up-right" })
+createToggle("Smooth Animations", "smoothAnim", "Spring motion for dialogs, tabs, sliders, toggles and the hub window", { "stars", "four-point-star", "stacked-squares-arrow-up-right" })
+createSlider("UI Scale", "uiScale", 0.5, 1.5, 0.05, function(v)
+	return string.format("%d%%", math.floor(v * 100 + 0.5))
+end, { "frame-expanded", "arrows-small-directional", "stacked-squares-arrow-up-right" })
+createToggle("Modal Handler", "modalHandler", "Keeps your mouse free while the menu is open, even in first person games", { "arrows-small-directional" })
+createAction("Reset Scale", "Reset Scale", function()
+	setSetting("uiScale", 1)
+	UI.applyScale()
+	notify("UI scale reset to 100%", "success")
+end, "Puts the menu size back to 100%", { "arrow-rotate-right" })
+createToggle("Open Hub On Start", "openOnStart", nil, { "circle-play" })
+createToggle("Remember Window Position", "rememberPos", nil, { "pin" })
+createSlider("Window Transparency", "opacity", 0, 0.6, 0.02, function(v)
+	return pctFmt(v)
+end, { "eye" })
+do
+	local opts = {}
+	for i, a in ipairs(accents) do
+		opts[i] = { label = a.name, value = i }
+	end
+	createChoice("Accent Color", "accent", opts, { "paint-brush" })
+end
+createToggle("Esc Menu Background Image", "bgImage", "Needs sunrise-bali-jungle.jpg in your workspace folder", { "image" })
+createSlider("Background Image Fade", "bgTransparency", 0.5, 0.95, 0.05, function(v)
+	return pctFmt(1 - v)
+end, { "image-stacked" })
+createToggle("Custom Esc Menu Layout", "moveMenu", "Slides the Roblox menu to the side", { "sidebar" })
+createKeybind("Toggle Hub Keybind", "toggleKey", { "keyboard" })
+createAction("Window Position", "Reset", function()
+	UI.windowFrame.Position = UI.WINDOW_DEFAULT_POS
+	setSetting("winX", 0)
+	setSetting("winY", 0)
+end, nil, { "arrows-small-directional" })
+
+createSection("Data")
+createAction("Storage Folder", "Copy Path", function()
+	if setclipboard then
+		pcall(setclipboard, ROOT)
+		notify("Copied " .. ROOT .. ". It holds Music, Thumbs, Scripts and Settings.json", "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end, "Everything is stored in workspace/" .. ROOT, { "folder" })
+createAction("Export Settings", "Copy To Clipboard", function()
+	if setclipboard then
+		pcall(setclipboard, httpService:JSONEncode(settings))
+		notify("Settings copied to clipboard", "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end, nil, { "arrow-up-from-line" })
+createAction("Import Settings", "Paste From Clipboard", function()
+	if not getclipboard then
+		notify("getclipboard is not supported by your executor", "warn")
+		return
+	end
+	local ok, data = pcall(function()
+		return httpService:JSONDecode(getclipboard())
+	end)
+	if not ok or type(data) ~= "table" then
+		notify("Clipboard does not contain valid settings", "error")
+		return
+	end
+	local n = 0
+	for k, v in pairs(data) do
+		if defaults[k] ~= nil and k ~= "configRev" and type(v) == type(defaults[k]) then
+			setSetting(k, v)
+			n += 1
+		end
+	end
+	notify("Imported " .. n .. " setting(s)", "success")
+end, nil, { "arrow-down-to-line" })
+createAction("Reset All Settings", "Reset", function()
+	for k, v in pairs(defaults) do
+		if k ~= "configRev" then
+			setSetting(k, type(v) == "table" and {} or v)
+		end
+	end
+	if rebuildQuick then
+		rebuildQuick()
+	end
+	notify("Settings reset to defaults", "success")
+end, nil, { "arrow-spin-counter-clockwise" })
+createAction("Unload Menu", "Unload", function()
+	if type(env.BasesMenuCleanup) == "function" then
+		env.BasesMenuCleanup()
+	end
+end, "Removes the hub, its button and all connections", { "circle-x" })
+
+UI.version = "2026.10.28"
+UI.dev = { name = "fyandevelopers" }
+
+function UI.dev.isDeveloper(lp)
+	return lp ~= nil and type(lp.Name) == "string" and lp.Name:lower() == UI.dev.name
+end
+
+function UI.dev.report()
+	local lines = {}
+	local function add(text)
+		lines[#lines + 1] = text
+	end
+	add("Bases Menu debug report")
+	add("Build: " .. UI.version)
+	add("Menu name: " .. UI.brand.name)
+	add("Time: " .. os.date("!%Y-%m-%d %H:%M:%S") .. " UTC")
+	local exeName, exeVersion
+	if identifyexecutor then
+		local ok, a, b = pcall(identifyexecutor)
+		if ok then
+			exeName, exeVersion = a, b
+		end
+	end
+	add("Executor: " .. tostring(exeName or "unknown") .. (exeVersion and (" " .. tostring(exeVersion)) or ""))
+	add("Place: " .. tostring(game.PlaceId) .. "  Game: " .. tostring(game.GameId) .. "  Job: " .. tostring(game.JobId))
+	local lp = players.LocalPlayer
+	add("Player: " .. tostring(lp and lp.Name) .. "  UserId: " .. tostring(lp and lp.UserId))
+	local yes, no = {}, {}
+	for _, name in ipairs({
+		"setclipboard", "getclipboard", "readfile", "writefile", "isfile", "isfolder", "listfiles", "makefolder", "delfile",
+		"getcustomasset", "queue_on_teleport", "setfpscap", "request", "http_request", "loadstring", "hookfunction",
+		"firesignal", "getconnections", "getgc", "fireclickdetector", "identifyexecutor",
+	}) do
+		if type(env[name]) == "function" then
+			yes[#yes + 1] = name
+		else
+			no[#no + 1] = name
+		end
+	end
+	add("Executor features: " .. table.concat(yes, ", "))
+	add("Missing features: " .. (#no > 0 and table.concat(no, ", ") or "none"))
+	add("File system: " .. (hasFS and "yes" or "no") .. "  Storage: " .. tostring(ROOT))
+	local run = UI.run.last
+	if run then
+		add(string.format("Last run: %s, %d chars, queued %.0f ms, compiled in %.0f ms, ran %s", run.label, run.size, run.queued * 1000, run.compile * 1000, run.run and string.format("%.0f ms", run.run * 1000) or "still running"))
+	else
+		add("Last run: none yet")
+	end
+	local L = UI.session.labels
+	add("Session: players " .. tostring(L.players.Text) .. ", ping " .. tostring(L.ping.Text) .. ", fps " .. tostring(L.fps.Text) .. ", memory " .. tostring(L.memory.Text) .. ", uptime " .. tostring(L.uptime.Text))
+	local keys = {}
+	for _, key in ipairs({
+		"theme", "accent", "uiScale", "smoothAnim", "modalHandler", "toggleKey", "openOnStart", "confirmHub", "hubMax",
+		"hideKey", "hidePatched", "verifiedOnly", "antiIdle", "unlockFps", "fpsCap", "terminalPort", "terminalCookies",
+	}) do
+		keys[#keys + 1] = key .. "=" .. tostring(settings[key])
+	end
+	add("Settings: " .. table.concat(keys, " "))
+	add("Counts: pinned " .. #settings.pinned .. ", recent " .. #UI.history.list .. ", tabs " .. #settings.tabOrder)
+	local failed = 0
+	for _, e in ipairs(UI.history.list) do
+		if e.ok ~= true and failed < 5 then
+			failed += 1
+			add("Failed run " .. failed .. ": " .. tostring(e.name) .. " - " .. tostring(e.err or "no message"))
+		end
+	end
+	if failed == 0 then
+		add("Failed runs: none")
+	end
+	return table.concat(lines, "\n")
+end
+
+function UI.dev.build()
+	createSection("Developer")
+	createAction("Opening Intro", "Replay", function()
+		UI.intro.start(UI.hubOpen())
+	end, "Plays the first-run intro animation again", { "circle-play" })
+	createAction("Debug Report", "Copy Report", function()
+		local ok, text = pcall(UI.dev.report)
+		if not ok then
+			notify("Could not build the report: " .. tostring(text), "error")
+		elseif setclipboard then
+			pcall(setclipboard, text)
+			notify("Debug report copied", "success")
+		else
+			notify("setclipboard is not supported by your executor", "warn")
+		end
+	end, "Copies the build, executor features, settings and recent failed runs", { "clipboard-pencil", "code" })
+end
+
+if UI.dev.isDeveloper(players.LocalPlayer) then
+	UI.dev.build()
+end
+
+
+UI.extra = {}
+UI.extra.green = Color3.fromRGB(90, 210, 130)
+UI.extra.red = Color3.fromRGB(240, 95, 95)
+
+function UI.extra.section(key, title, order)
+	local header = sectionHeader(title, UI.executorPage, order)
+	header.Name = "Header_" .. key
+	local label
+	for _, child in ipairs(header:GetChildren()) do
+		if child:IsA("TextLabel") then
+			label = child
+			break
+		end
+	end
+	local content = new("Frame", {
+		Name = "Section_" .. key,
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundTransparency = 1,
+		LayoutOrder = order + 1,
+	}, UI.executorPage)
+	new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 10) }, content)
+	local toggle = new("TextButton", {
+		Name = "Collapse",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		ZIndex = 2,
+	}, header)
+	local function apply()
+		local closed = settings.collapsed[key] == true
+		content.Visible = not closed
+		if label then
+			label.Text = title .. " <font color='rgb(213, 215, 221)'><font family='" .. ICON_PATH .. "'>" .. (closed and "chevron-small-right" or "chevron-small-down") .. "</font></font>"
+		end
+	end
+	toggle.MouseButton1Click:Connect(function()
+		settings.collapsed[key] = (settings.collapsed[key] ~= true) or nil
+		setSetting("collapsed", settings.collapsed)
+		apply()
+	end)
+	apply()
+	return content, header
+end
+
+function UI.extra.statRow(parent, defs, order)
+	local row = new("Frame", { Name = "StatRow", Size = UDim2.new(1, 0, 0, 62), BackgroundTransparency = 1, LayoutOrder = order }, parent)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8) }, row)
+	local count = #defs
+	local values = {}
+	for i, def in ipairs(defs) do
+		local cell = new("Frame", {
+			Name = "Stat_" .. def[1],
+			Size = UDim2.new(1 / count, -8 * (count - 1) / count, 1, 0),
+			BackgroundColor3 = C.card,
+			BackgroundTransparency = 0.5,
+			BorderSizePixel = 0,
+			LayoutOrder = i,
+		}, row)
+		corner(cell, 8)
+		values[def[1]] = new("TextLabel", {
+			Name = "Value",
+			Size = UDim2.new(1, 0, 0, 30),
+			Position = UDim2.new(0, 0, 0, 8),
+			BackgroundTransparency = 1,
+			Text = def[3],
+			TextColor3 = C.text,
+			TextSize = 20,
+			FontFace = sans(),
+		}, cell)
+		new("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 16),
+			Position = UDim2.new(0, 0, 0, 38),
+			BackgroundTransparency = 1,
+			Text = def[2],
+			TextColor3 = C.sub,
+			TextSize = 12,
+			FontFace = sans(Enum.FontWeight.Regular),
+		}, cell)
+	end
+	return values
+end
+
+function UI.extra.copy(value, what)
+	if setclipboard then
+		pcall(setclipboard, tostring(value))
+		notify(what .. " copied", "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end
+
+function UI.extra.armed(btn, base, run)
+	local token = 0
+	btn.MouseButton1Click:Connect(function()
+		token += 1
+		local mine = token
+		if btn.Text ~= "Confirm?" then
+			btn.Text = "Confirm?"
+			task.delay(2.5, function()
+				if token == mine and btn.Parent then
+					btn.Text = base
+				end
+			end)
+			return
+		end
+		btn.Text = base
+		run()
+	end)
+end
+
+function UI.pinScript(name, source)
+	for _, p in ipairs(settings.pinned) do
+		if type(p) == "table" and p.name == name and p.source == source then
+			notify("'" .. name .. "' is already pinned", "info")
+			return false
+		end
+	end
+	table.insert(settings.pinned, { name = name, source = source })
+	setSetting("pinned", settings.pinned)
+	rebuildQuick()
+	notify("Pinned '" .. name .. "' to Quick Scripts", "success")
+	return true
+end
+
+UI.session = { frames = 0, last = os.clock() }
+do
+	local content = UI.extra.section("session", "Session", 10)
+	UI.session.labels = UI.extra.statRow(content, {
+		{ "players", "Players", "-" },
+		{ "ping", "Ping", "-" },
+		{ "fps", "FPS", "-" },
+		{ "memory", "Memory", "-" },
+		{ "uptime", "Uptime", "-" },
+	}, 1)
+	UI.session.info = new("TextLabel", {
+		Name = "Info",
+		Size = UDim2.new(1, 0, 0, 18),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		LayoutOrder = 2,
+	}, content)
+end
+
+function UI.session.clock(seconds)
+	seconds = math.floor(seconds)
+	if seconds >= 3600 then
+		return string.format("%dh %02dm", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60))
+	elseif seconds >= 60 then
+		return string.format("%dm %02ds", math.floor(seconds / 60), seconds % 60)
+	end
+	return seconds .. "s"
+end
+
+function UI.session.update()
+	local S = UI.session
+	local L = S.labels
+	local now = os.clock()
+	local dt = now - S.last
+	if dt > 0.2 then
+		L.fps.Text = tostring(math.floor(S.frames / dt + 0.5))
+		S.frames, S.last = 0, now
+	end
+	local okPlayers, count = pcall(function()
+		return #players:GetPlayers()
+	end)
+	local okMax, max = pcall(function()
+		return players.MaxPlayers
+	end)
+	L.players.Text = okPlayers and (okMax and type(max) == "number" and (count .. "/" .. max) or tostring(count)) or "-"
+	local okPing, ping = pcall(function()
+		return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	L.ping.Text = okPing and type(ping) == "number" and (math.floor(ping + 0.5) .. " ms") or "-"
+	local okMem, mem = pcall(function()
+		return game:GetService("Stats"):GetTotalMemoryUsageMb()
+	end)
+	L.memory.Text = okMem and type(mem) == "number" and (math.floor(mem + 0.5) .. " MB") or "-"
+	local okUp, up = pcall(function()
+		return workspace.DistributedGameTime
+	end)
+	L.uptime.Text = okUp and type(up) == "number" and S.clock(up) or "-"
+end
+
+function UI.session.describe()
+	local S = UI.session
+	local place = tostring(game.PlaceId)
+	local job = tostring(game.JobId)
+	S.base = "Place " .. place .. "  -  Job " .. (job:sub(1, 8) ~= "" and job:sub(1, 8) or "-")
+	S.info.Text = S.base
+	task.spawn(function()
+		local ok, product = pcall(function()
+			return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+		end)
+		if ok and type(product) == "table" and type(product.Name) == "string" and S.info.Parent then
+			S.info.Text = product.Name .. "  -  " .. S.base
+		end
+	end)
+end
+
+track(runService.Heartbeat:Connect(function()
+	UI.session.frames += 1
+end))
+UI.session.describe()
+UI.session.update()
+task.spawn(function()
+	while running do
+		task.wait(1)
+		if running and UI.executorPage.Visible and UI.content.Visible then
+			pcall(UI.session.update)
+		end
+	end
+end)
+
+UI.history = { list = {}, rows = {}, max = 15, shown = 5 }
+for _, e in ipairs(settings.history) do
+	if type(e) == "table" and type(e.source) == "string" then
+		UI.history.list[#UI.history.list + 1] = { name = tostring(e.name or "Script"), source = e.source, ok = e.ok ~= false, at = tonumber(e.at) or 0 }
+	end
+end
+
+function UI.history.ago(at)
+	local diff = os.time() - (tonumber(at) or 0)
+	if at == nil or at <= 0 then
+		return "earlier"
+	elseif diff < 45 then
+		return "just now"
+	elseif diff < 3600 then
+		return math.max(1, math.floor(diff / 60 + 0.5)) .. "m ago"
+	elseif diff < 86400 then
+		return math.floor(diff / 3600 + 0.5) .. "h ago"
+	end
+	return math.floor(diff / 86400 + 0.5) .. "d ago"
+end
+
+do
+	local content, header = UI.extra.section("recent", "Recent", 12)
+	UI.history.content = content
+	UI.history.clear = iconBtn("Clear", { "trash-can" }, 90, header, 24, false, 13)
+	UI.history.clear.AnchorPoint = Vector2.new(1, 0)
+	UI.history.clear.Position = UDim2.new(1, 0, 0, 0)
+	UI.history.clear.ZIndex = 5
+	for _, d in ipairs(UI.history.clear:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			d.ZIndex = 6
+		end
+	end
+	UI.history.empty = new("TextLabel", {
+		Name = "Empty",
+		Size = UDim2.new(1, 0, 0, 40),
+		BackgroundTransparency = 1,
+		Text = "Nothing executed yet. Scripts you run show up here.",
+		TextColor3 = C.sub,
+		TextSize = 14,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = 1,
+	}, content)
+	UI.history.more = UI.outlineButton(content, 150, 34, "", false)
+	UI.history.more.AnchorPoint = Vector2.new(0, 0)
+	UI.history.more.Position = UDim2.new(0, 0, 0, 0)
+	UI.history.more.LayoutOrder = 100
+	UI.history.more.TextSize = 14
+end
+
+function UI.history.row(index, entry)
+	local H = UI.history
+	local row = new("Frame", {
+		Name = "HistoryRow",
+		Size = UDim2.new(1, 0, 0, 50),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.6,
+		BorderSizePixel = 0,
+		LayoutOrder = index + 1,
+	}, H.content)
+	corner(row, 8)
+	local statusColor = entry.ok and UI.extra.green or UI.extra.red
+	local icon = newIcon(row, entry.ok and { "circle-check" } or { "x" }, entry.ok, 18, statusColor)
+	icon.Position = UDim2.new(0, 14, 0.5, -10)
+	new("TextLabel", {
+		Name = "Name",
+		Size = UDim2.new(1, -220, 0, 20),
+		Position = UDim2.new(0, 46, 0, 7),
+		BackgroundTransparency = 1,
+		Text = entry.name,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local detail = UI.history.ago(entry.at) .. "  -  " .. #entry.source .. " chars"
+	if not entry.ok and entry.err then
+		detail = tostring(entry.err):gsub("%s+", " ")
+	end
+	new("TextLabel", {
+		Name = "Detail",
+		Size = UDim2.new(1, -220, 0, 16),
+		Position = UDim2.new(0, 46, 0, 28),
+		BackgroundTransparency = 1,
+		Text = detail,
+		TextColor3 = (not entry.ok and entry.err) and UI.extra.red or C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Regular),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	local holder = new("Frame", { Name = "Buttons", Size = UDim2.new(0, 160, 1, 0), Position = UDim2.new(1, -168, 0, 0), BackgroundTransparency = 1 }, row)
+	new("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, holder)
+	local run = iconBtn("Run", { "play-small" }, 64, holder, 30, true)
+	run.Name = "Run"
+	run.LayoutOrder = 1
+	accentize(run)
+	local edit = iconBtn("", { "pencil" }, 32, holder, 30, false)
+	edit.Name = "Edit"
+	edit.LayoutOrder = 2
+	local pin = iconBtn("", { "pin" }, 32, holder, 30, false)
+	pin.Name = "Pin"
+	pin.LayoutOrder = 3
+	run.MouseButton1Click:Connect(function()
+		runSource(entry.source, entry.name)
+	end)
+	edit.MouseButton1Click:Connect(function()
+		addTab(entry.name, entry.source)
+	end)
+	pin.MouseButton1Click:Connect(function()
+		UI.pinScript(entry.name, entry.source)
+	end)
+	return row
+end
+
+function UI.history.render()
+	local H = UI.history
+	for _, r in ipairs(H.rows) do
+		pcall(function()
+			r:Destroy()
+		end)
+	end
+	H.rows = {}
+	H.empty.Visible = #H.list == 0
+	H.clear.Visible = #H.list > 0
+	for i = 1, math.min(#H.list, H.shown) do
+		H.rows[#H.rows + 1] = H.row(i, H.list[i])
+	end
+	H.more.Visible = #H.list > 5
+	H.more.Text = H.shown > 5 and "Show less" or ("Show all " .. #H.list)
+end
+
+function UI.history.persist()
+	local keep = {}
+	for _, e in ipairs(UI.history.list) do
+		if #keep >= 8 then
+			break
+		end
+		if #e.source <= 20000 then
+			keep[#keep + 1] = { name = e.name, source = e.source, ok = e.ok, at = e.at }
+		end
+	end
+	setSetting("history", keep)
+end
+
+function UI.history.add(name, source, ok, err)
+	local H = UI.history
+	if type(source) ~= "string" or source:match("^%s*$") then
+		return
+	end
+	for i = #H.list, 1, -1 do
+		if H.list[i].source == source then
+			table.remove(H.list, i)
+		end
+	end
+	if UI.home then
+		UI.home.recordRun(ok == true)
+	end
+	local entry = { name = tostring(name or "Script"), source = source, ok = ok == true, err = (ok ~= true and err ~= nil) and tostring(err):sub(1, 160) or nil, at = os.time() }
+	table.insert(H.list, 1, entry)
+	while #H.list > H.max do
+		table.remove(H.list)
+	end
+	H.persist()
+	H.render()
+	return entry
+end
+
+function UI.history.fail(entry, err)
+	if entry.ok and UI.home then
+		UI.home.recordFail()
+	end
+	entry.ok = false
+	entry.err = tostring(err):sub(1, 160)
+	UI.history.persist()
+	UI.history.render()
+end
+
+UI.history.clear.MouseButton1Click:Connect(function()
+	UI.history.list = {}
+	UI.history.shown = 5
+	UI.history.persist()
+	UI.history.render()
+end)
+UI.history.more.MouseButton1Click:Connect(function()
+	UI.history.shown = UI.history.shown > 5 and 5 or UI.history.max
+	UI.history.render()
+end)
+UI.history.render()
+
+UI.snippets = {
+	{
+		"Infinite Jump",
+		"Jump again while in the air. Run it twice to turn it off.",
+		table.concat({
+			"local env = getgenv()",
+			"if env.BasesInfiniteJump then",
+			"\tenv.BasesInfiniteJump:Disconnect()",
+			"\tenv.BasesInfiniteJump = nil",
+			"\treturn",
+			"end",
+			"env.BasesInfiniteJump = game:GetService(\"UserInputService\").JumpRequest:Connect(function()",
+			"\tlocal character = game:GetService(\"Players\").LocalPlayer.Character",
+			"\tlocal humanoid = character and character:FindFirstChildOfClass(\"Humanoid\")",
+			"\tif humanoid then",
+			"\t\thumanoid:ChangeState(Enum.HumanoidStateType.Jumping)",
+			"\tend",
+			"end)",
+		}, "\n"),
+	},
+	{
+		"Noclip",
+		"Walk through walls. Run it twice to turn it off.",
+		table.concat({
+			"local env = getgenv()",
+			"if env.BasesNoclip then",
+			"\tenv.BasesNoclip:Disconnect()",
+			"\tenv.BasesNoclip = nil",
+			"\treturn",
+			"end",
+			"env.BasesNoclip = game:GetService(\"RunService\").Stepped:Connect(function()",
+			"\tlocal character = game:GetService(\"Players\").LocalPlayer.Character",
+			"\tif not character then",
+			"\t\treturn",
+			"\tend",
+			"\tfor _, part in ipairs(character:GetDescendants()) do",
+			"\t\tif part:IsA(\"BasePart\") then",
+			"\t\t\tpart.CanCollide = false",
+			"\t\tend",
+			"\tend",
+			"end)",
+		}, "\n"),
+	},
+	{
+		"Fullbright",
+		"Removes darkness and fog so everything is lit.",
+		table.concat({
+			"local lighting = game:GetService(\"Lighting\")",
+			"lighting.Brightness = 2",
+			"lighting.ClockTime = 14",
+			"lighting.FogEnd = 100000",
+			"lighting.GlobalShadows = false",
+			"lighting.Ambient = Color3.fromRGB(178, 178, 178)",
+			"lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)",
+		}, "\n"),
+	},
+	{
+		"Speed and Jump",
+		"Sets walk speed to 50 and jump power to 75.",
+		table.concat({
+			"local character = game:GetService(\"Players\").LocalPlayer.Character",
+			"local humanoid = character and character:FindFirstChildOfClass(\"Humanoid\")",
+			"if humanoid then",
+			"\thumanoid.WalkSpeed = 50",
+			"\thumanoid.UseJumpPower = true",
+			"\thumanoid.JumpPower = 75",
+			"end",
+		}, "\n"),
+	},
+	{
+		"Click Teleport",
+		"Hold Left Ctrl and click to teleport. Run it twice to turn it off.",
+		table.concat({
+			"local env = getgenv()",
+			"if env.BasesClickTeleport then",
+			"\tenv.BasesClickTeleport:Disconnect()",
+			"\tenv.BasesClickTeleport = nil",
+			"\treturn",
+			"end",
+			"local players = game:GetService(\"Players\")",
+			"local userInput = game:GetService(\"UserInputService\")",
+			"local mouse = players.LocalPlayer:GetMouse()",
+			"env.BasesClickTeleport = mouse.Button1Down:Connect(function()",
+			"\tif not userInput:IsKeyDown(Enum.KeyCode.LeftControl) then",
+			"\t\treturn",
+			"\tend",
+			"\tlocal character = players.LocalPlayer.Character",
+			"\tlocal root = character and character:FindFirstChild(\"HumanoidRootPart\")",
+			"\tif root and mouse.Hit then",
+			"\t\troot.CFrame = mouse.Hit + Vector3.new(0, 3, 0)",
+			"\tend",
+			"end)",
+		}, "\n"),
+	},
+	{
+		"List Remotes",
+		"Prints every RemoteEvent and RemoteFunction to the console.",
+		table.concat({
+			"local count = 0",
+			"for _, object in ipairs(game:GetDescendants()) do",
+			"\tif object:IsA(\"RemoteEvent\") or object:IsA(\"RemoteFunction\") then",
+			"\t\tcount = count + 1",
+			"\t\tprint(object.ClassName, object:GetFullName())",
+			"\tend",
+			"end",
+			"print(\"Found \" .. count .. \" remotes\")",
+		}, "\n"),
+	},
+	{
+		"Copy Position",
+		"Copies your character CFrame to the clipboard.",
+		table.concat({
+			"local character = game:GetService(\"Players\").LocalPlayer.Character",
+			"local root = character and character:FindFirstChild(\"HumanoidRootPart\")",
+			"if root then",
+			"\tlocal text = tostring(root.CFrame)",
+			"\tprint(text)",
+			"\tif setclipboard then",
+			"\t\tsetclipboard(\"CFrame.new(\" .. text .. \")\")",
+			"\tend",
+			"end",
+		}, "\n"),
+	},
+	{
+		"Reset Lighting",
+		"Restores brightness, time and shadows to common defaults.",
+		table.concat({
+			"local lighting = game:GetService(\"Lighting\")",
+			"lighting.Brightness = 1",
+			"lighting.ClockTime = 12",
+			"lighting.FogEnd = 100000",
+			"lighting.GlobalShadows = true",
+			"lighting.Ambient = Color3.fromRGB(70, 70, 70)",
+			"lighting.OutdoorAmbient = Color3.fromRGB(127, 127, 127)",
+		}, "\n"),
+	},
+}
+
+do
+	local content = UI.extra.section("snippets", "Snippets", 14)
+	local grid = new("Frame", { Name = "SnippetGrid", AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1 }, content)
+	new("UIGridLayout", {
+		CellSize = UDim2.new(1 / 3, -8, 0, 96),
+		CellPadding = UDim2.new(0, 12, 0, 12),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, grid)
+	UI.snippetCards = {}
+	for i, def in ipairs(UI.snippets) do
+		local card = new("Frame", { Name = "Snippet_" .. i, BackgroundColor3 = C.card, BackgroundTransparency = 0.6, BorderSizePixel = 0, LayoutOrder = i }, grid)
+		corner(card, 8)
+		new("TextLabel", {
+			Size = UDim2.new(1, -24, 0, 20),
+			Position = UDim2.new(0, 12, 0, 8),
+			BackgroundTransparency = 1,
+			Text = def[1],
+			TextColor3 = C.text,
+			TextSize = 14,
+			FontFace = sans(),
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, card)
+		new("TextLabel", {
+			Size = UDim2.new(1, -24, 0, 28),
+			Position = UDim2.new(0, 12, 0, 29),
+			BackgroundTransparency = 1,
+			Text = def[2],
+			TextColor3 = C.sub,
+			TextSize = 12,
+			FontFace = sans(Enum.FontWeight.Regular),
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, card)
+		local run = iconBtn("Run", { "play-small" }, 68, card, 26, true)
+		run.Name = "Run"
+		run.Position = UDim2.new(0, 12, 1, -34)
+		accentize(run)
+		local insert = iconBtn("Insert", { "plus-small" }, 78, card, 26, false)
+		insert.Name = "Insert"
+		insert.Position = UDim2.new(0, 88, 1, -34)
+		run.MouseButton1Click:Connect(function()
+			runSource(def[3], def[1])
+		end)
+		insert.MouseButton1Click:Connect(function()
+			addTab(def[1], def[3])
+		end)
+		UI.snippetCards[i] = card
+	end
+end
+
+do
+	local content = UI.extra.section("tools", "Game Tools", 16)
+	local grid = new("Frame", { Name = "ToolGrid", AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1 }, content)
+	new("UIGridLayout", {
+		CellSize = UDim2.new(0.25, -9, 0, 40),
+		CellPadding = UDim2.new(0, 12, 0, 12),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, grid)
+	UI.gameTools = {}
+	local order = 0
+	local function tool(key, text)
+		order += 1
+		local btn = UI.outlineButton(grid, 100, 40, text, false)
+		btn.AnchorPoint = Vector2.new(0, 0)
+		btn.Position = UDim2.new(0, 0, 0, 0)
+		btn.Name = "Tool_" .. key
+		btn.LayoutOrder = order
+		UI.gameTools[key] = btn
+		return btn
+	end
+	UI.extra.rejoin = function()
+		local ok, err = pcall(function()
+			local lp = players.LocalPlayer
+			local teleport = game:GetService("TeleportService")
+			if #players:GetPlayers() <= 1 then
+				teleport:Teleport(game.PlaceId, lp)
+			else
+				teleport:TeleportToPlaceInstance(game.PlaceId, game.JobId, lp)
+			end
+		end)
+		if ok then
+			notify("Rejoining...", "info")
+		else
+			notify("Rejoin failed: " .. tostring(err), "error")
+		end
+	end
+	UI.extra.armed(tool("rejoin", "Rejoin"), "Rejoin", UI.extra.rejoin)
+	UI.extra.hop = function()
+		notify("Looking for another server...", "info")
+		task.spawn(function()
+			local okGet, body = pcall(function()
+				return game:HttpGet("https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100")
+			end)
+			local okDecode, decoded = pcall(function()
+				return httpService:JSONDecode(body)
+			end)
+			local list = okGet and okDecode and type(decoded) == "table" and decoded.data
+			if type(list) ~= "table" then
+				notify("Could not read the server list", "error")
+				return
+			end
+			local choices = {}
+			for _, s in ipairs(list) do
+				if type(s) == "table" and s.id ~= game.JobId and type(s.playing) == "number" and type(s.maxPlayers) == "number" and s.playing < s.maxPlayers then
+					choices[#choices + 1] = s.id
+				end
+			end
+			if #choices == 0 then
+				notify("No other servers found", "warn")
+				return
+			end
+			local pick = choices[math.random(1, #choices)]
+			local ok, err = pcall(function()
+				game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, pick, players.LocalPlayer)
+			end)
+			if not ok then
+				notify("Server hop failed: " .. tostring(err), "error")
+			end
+		end)
+	end
+	UI.extra.armed(tool("hop", "Server Hop"), "Server Hop", UI.extra.hop)
+	tool("placeId", "Copy Place ID").MouseButton1Click:Connect(function()
+		UI.extra.copy(game.PlaceId, "Place ID")
+	end)
+	tool("jobId", "Copy Job ID").MouseButton1Click:Connect(function()
+		UI.extra.copy(game.JobId, "Job ID")
+	end)
+	tool("joinScript", "Copy Join Script").MouseButton1Click:Connect(function()
+		UI.extra.copy('game:GetService("TeleportService"):TeleportToPlaceInstance(' .. tostring(game.PlaceId) .. ', "' .. tostring(game.JobId) .. '", game:GetService("Players").LocalPlayer)', "Join script")
+	end)
+	tool("gameLink", "Copy Game Link").MouseButton1Click:Connect(function()
+		UI.extra.copy("https://www.roblox.com/games/" .. tostring(game.PlaceId), "Game link")
+	end)
+	UI.extra.armed(tool("reset", "Reset Character"), "Reset Character", function()
+		local character = players.LocalPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid.Health = 0
+		else
+			notify("No character to reset", "warn")
+		end
+	end)
+	local idle = tool("idle", "Anti Idle")
+	idle.MouseButton1Click:Connect(function()
+		setSetting("antiIdle", not settings.antiIdle)
+	end)
+	bind("antiIdle", function(v)
+		idle.Text = "Anti Idle: " .. (v and "On" or "Off")
+	end)
+end
+
+UI.homePage = new("ScrollingFrame", {
+	Name = "HomePage",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	Visible = true,
+}, UI.pageContainer)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 12) }, UI.homePage)
+padding(UI.homePage, 16, 24, 24, 24)
+UI.executorPage.Visible = false
+
+UI.home = { order = 0, acc = 0, frames = 0, fps = 0, samples = 0, bars = 30, name = "friend" }
+UI.home.news = {
+	{ "Lyrics viewer", "Word-by-word karaoke and duets in Music" },
+	{ "Home tab", "Live stats, streak and quick actions" },
+	{ "Local Player", "Fly, noclip, speed and more in one tab" },
+	{ "Script Hub", "Details dialog and fixed thumbnails" },
+}
+
+function UI.home.card(height, parent, width)
+	UI.home.order += 1
+	local f = new("Frame", {
+		Size = width and UDim2.new(width, -6, 0, height) or UDim2.new(1, 0, 0, height),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		LayoutOrder = UI.home.order,
+	}, parent or UI.homePage)
+	corner(f, 8)
+	return f
+end
+
+function UI.home.row(height)
+	UI.home.order += 1
+	local r = new("Frame", { Size = UDim2.new(1, 0, 0, height), BackgroundTransparency = 1, LayoutOrder = UI.home.order }, UI.homePage)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, r)
+	return r
+end
+
+function UI.home.label(parent, props)
+	local base = {
+		BackgroundTransparency = 1,
+		TextColor3 = C.text,
+		TextSize = 14,
+		FontFace = sans(),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}
+	for k, v in pairs(props) do
+		base[k] = v
+	end
+	return new("TextLabel", base, parent)
+end
+
+function UI.home.greeting()
+	local ok, hour = pcall(function()
+		return tonumber(os.date("%H"))
+	end)
+	hour = ok and hour or 12
+	if hour < 5 then
+		return "Good night"
+	elseif hour < 11 then
+		return "Good morning"
+	elseif hour < 15 then
+		return "Good afternoon"
+	elseif hour < 19 then
+		return "Good evening"
+	end
+	return "Good night"
+end
+
+function UI.home.executorName()
+	if type(identifyexecutor) == "function" then
+		local ok, name, version = pcall(identifyexecutor)
+		if ok and type(name) == "string" and name ~= "" then
+			return name .. ((type(version) == "string" and version ~= "") and (" " .. version) or "")
+		end
+	end
+	return "Unknown executor"
+end
+
+function UI.home.copy(text, what)
+	if setclipboard then
+		pcall(setclipboard, tostring(text))
+		notify("Copied " .. what, "success")
+	else
+		notify("setclipboard is not supported by your executor", "warn")
+	end
+end
+
+function UI.home.smallBtn(parent, text, width, callback, filled)
+	local b = new("TextButton", {
+		Size = UDim2.fromOffset(width, 28),
+		BackgroundColor3 = C.card,
+		BackgroundTransparency = 0.2,
+		AutoButtonColor = false,
+		Text = text,
+		TextColor3 = C.text,
+		TextSize = 13,
+		FontFace = sans(),
+	}, parent)
+	corner(b, 6)
+	if filled then
+		accentize(b)
+		b.BackgroundTransparency = 0
+	else
+		b.MouseEnter:Connect(function()
+			b.BackgroundTransparency = 0.02
+		end)
+		b.MouseLeave:Connect(function()
+			b.BackgroundTransparency = 0.2
+		end)
+	end
+	b.MouseButton1Click:Connect(callback)
+	return b
+end
+
+function UI.home.spark(tile)
+	local H = UI.home
+	local holder = new("Frame", { Position = UDim2.new(0, 14, 0, 62), Size = UDim2.new(1, -28, 0, 20), BackgroundTransparency = 1 }, tile)
+	local spark = { values = {}, bars = {} }
+	for i = 1, H.bars do
+		local bar = new("Frame", {
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.new((i - 1) / H.bars, 0, 1, 0),
+			Size = UDim2.new(1 / H.bars, -2, 0, 2),
+			BackgroundTransparency = 0.55,
+			BorderSizePixel = 0,
+		}, holder)
+		accentize(bar)
+		spark.bars[i] = bar
+	end
+	function spark.push(value, ceiling)
+		local v = spark.values
+		v[#v + 1] = value
+		if #v > H.bars then
+			table.remove(v, 1)
+		end
+		local top = ceiling
+		for _, x in ipairs(v) do
+			top = math.max(top, x)
+		end
+		local offset = H.bars - #v
+		for i, bar in ipairs(spark.bars) do
+			local x = v[i - offset]
+			local h = x and math.max(2, math.floor(20 * x / math.max(top, 1))) or 2
+			bar.Size = UDim2.new(1 / H.bars, -2, 0, h)
+			bar.BackgroundTransparency = x and 0.35 or 0.85
+		end
+	end
+	return spark
+end
+
+function UI.home.pill(parent, text, order)
+	local f = new("Frame", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 0, 24),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.55,
+		BorderSizePixel = 0,
+		LayoutOrder = order or 1,
+	}, parent)
+	corner(f, 12)
+	local l = new("TextLabel", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = C.text,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	}, f)
+	padding(l, 0, 10, 0, 10)
+	return l
+end
+
+function UI.home.paintBanner()
+	local H = UI.home
+	local color = accent()
+	if H.painted ~= color and H.bannerGradient then
+		H.painted = color
+		H.bannerGradient.Color = ColorSequence.new(color:Lerp(Color3.new(0.05, 0.05, 0.07), 0.5), Color3.new(0.1, 0.1, 0.125))
+		H.avatarStroke.Color = color
+	end
+end
+
+function UI.home.buildTop()
+	local H = UI.home
+	H.order += 1
+	local banner = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 124),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		LayoutOrder = H.order,
+	}, UI.homePage)
+	corner(banner, 10)
+	H.bannerGradient = new("UIGradient", { Rotation = 12 }, banner)
+	H.avatar = new("ImageLabel", {
+		Position = UDim2.new(0, 22, 0.5, -42),
+		Size = UDim2.fromOffset(84, 84),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+		Image = "",
+	}, banner)
+	corner(H.avatar, 42)
+	H.avatarStroke = new("UIStroke", { Thickness = 3, Transparency = 0.1, Color = accent() }, H.avatar)
+	H.greet = H.label(banner, {
+		Position = UDim2.new(0, 124, 0, 20),
+		Size = UDim2.new(1, -300, 0, 36),
+		Text = H.greeting(),
+		TextSize = 28,
+	})
+	local pills = new("Frame", { Position = UDim2.new(0, 124, 0, 66), Size = UDim2.new(1, -300, 0, 24), BackgroundTransparency = 1 }, banner)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, pills)
+	H.sub = H.pill(pills, "@player", 1)
+	H.execPill = H.pill(pills, H.executorName(), 2)
+	H.clockTime = H.label(banner, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -24, 0, 18),
+		Size = UDim2.fromOffset(160, 40),
+		TextSize = 34,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+	H.clock = H.label(banner, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -24, 0, 62),
+		Size = UDim2.fromOffset(200, 18),
+		TextColor3 = C.sub,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.paintBanner()
+
+	local server = H.card(88)
+	H.gameIcon = new("ImageLabel", {
+		Position = UDim2.new(0, 14, 0.5, -30),
+		Size = UDim2.fromOffset(60, 60),
+		BackgroundColor3 = C.dark,
+		BorderSizePixel = 0,
+		Image = "",
+	}, server)
+	corner(H.gameIcon, 12)
+	H.place = H.label(server, {
+		Position = UDim2.new(0, 88, 0, 14),
+		Size = UDim2.new(1, -520, 0, 24),
+		Text = game.Name ~= "" and game.Name or "Current game",
+		TextSize = 18,
+	})
+	H.serverInfo = H.label(server, {
+		Position = UDim2.new(0, 88, 0, 40),
+		Size = UDim2.new(1, -520, 0, 16),
+		Text = "Place " .. tostring(game.PlaceId),
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.playersInfo = H.label(server, {
+		Position = UDim2.new(0, 88, 0, 60),
+		Size = UDim2.new(1, -520, 0, 16),
+		Text = "",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	local actions = new("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -14, 0.5, 0),
+		Size = UDim2.fromOffset(410, 56),
+		BackgroundTransparency = 1,
+	}, server)
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(199, 26), CellPadding = UDim2.fromOffset(8, 4), SortOrder = Enum.SortOrder.LayoutOrder }, actions)
+	local function actionBtn(text, order, callback)
+		local b = H.smallBtn(actions, text, 199, callback)
+		b.LayoutOrder = order
+		b.Size = UDim2.fromOffset(199, 26)
+		return b
+	end
+	actionBtn("Copy Place ID", 1, function()
+		H.copy(game.PlaceId, "Place ID")
+	end)
+	actionBtn("Copy Job ID", 2, function()
+		H.copy(game.JobId, "Job ID")
+	end)
+	UI.extra.armed(actionBtn("Rejoin", 3, function() end), "Rejoin", UI.extra.rejoin)
+	UI.extra.armed(actionBtn("Server Hop", 4, function() end), "Server Hop", UI.extra.hop)
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+		end)
+		if ok and type(info) == "table" and type(info.Name) == "string" and H.place.Parent then
+			H.place.Text = info.Name
+		end
+	end)
+end
+
+function UI.home.buildStats()
+	local H = UI.home
+	local row = H.row(92)
+	H.values, H.sparks = {}, {}
+	for i, name in ipairs({ "FPS", "Ping", "Players", "Memory" }) do
+		local tile = H.card(92, row, 0.25)
+		tile.Size = UDim2.new(0.25, -9, 1, 0)
+		tile.LayoutOrder = i
+		H.label(tile, {
+			Position = UDim2.new(0, 14, 0, 10),
+			Size = UDim2.new(1, -28, 0, 14),
+			Text = string.upper(name),
+			TextColor3 = C.sub,
+			TextSize = 11,
+		})
+		H.values[name] = H.label(tile, {
+			Position = UDim2.new(0, 14, 0, 26),
+			Size = UDim2.new(1, -28, 0, 28),
+			Text = "-",
+			TextSize = 24,
+		})
+		if name == "Players" then
+			local track = new("Frame", {
+				Position = UDim2.new(0, 14, 0, 70),
+				Size = UDim2.new(1, -28, 0, 6),
+				BackgroundColor3 = Color3.new(0.2, 0.2, 0.25),
+				BorderSizePixel = 0,
+			}, tile)
+			corner(track, 3)
+			H.playersFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0 }, track)
+			accentize(H.playersFill)
+			corner(H.playersFill, 3)
+		else
+			H.sparks[name] = H.spark(tile)
+		end
+	end
+end
+
+function UI.home.buildBottom()
+	local H = UI.home
+	local row = H.row(224)
+
+	local recent = H.card(224, row, 0.58)
+	recent.Size = UDim2.new(0.58, -6, 1, 0)
+	recent.LayoutOrder = 1
+	H.label(recent, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -120, 0, 20), Text = "Recent scripts", TextSize = 15 })
+	H.recentBtn = H.smallBtn(recent, "Open Executor", 110, function()
+		goToPage("Executor")
+	end)
+	H.recentBtn.AnchorPoint = Vector2.new(1, 0)
+	H.recentBtn.Position = UDim2.new(1, -12, 0, 8)
+	H.recentList = new("Frame", { Position = UDim2.new(0, 12, 0, 44), Size = UDim2.new(1, -24, 1, -52), BackgroundTransparency = 1 }, recent)
+	new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, H.recentList)
+	H.recentEmpty = H.label(recent, {
+		Position = UDim2.new(0, 16, 0, 80),
+		Size = UDim2.new(1, -32, 0, 40),
+		Text = "Nothing executed yet.\nRun a script from the Executor or Script Hub tab.",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		TextWrapped = true,
+		TextTruncate = Enum.TextTruncate.None,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.recentRows = {}
+
+	local quick = H.card(224, row, 0.42)
+	quick.Size = UDim2.new(0.42, -6, 1, 0)
+	quick.LayoutOrder = 2
+	H.label(quick, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 20), Text = "Quick open", TextSize = 15 })
+	local grid = new("Frame", { Position = UDim2.new(0, 12, 0, 44), Size = UDim2.new(1, -24, 1, -52), BackgroundTransparency = 1 }, quick)
+	new("UIGridLayout", {
+		CellSize = UDim2.new(0.5, -4, 0, 40),
+		CellPadding = UDim2.fromOffset(8, 4),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, grid)
+	local tiles = {
+		{ "Executor", "Executor", { "code", "square-code" } },
+		{ "Script Hub", "ScriptHub", { "cloud-arrow-down" } },
+		{ "Local Player", "LocalPlayer", { "person" } },
+		{ "Music", "Music", { "music-note" } },
+		{ "Players", "Players", { "person-teleport", "person" } },
+		{ "Workspace", "Workspace", { "folder" } },
+		{ "Terminal", "Terminal", { "square-code", "code" } },
+		{ "Settings", "Settings", { "gear" } },
+	}
+	for i, tile in ipairs(tiles) do
+		local b = new("TextButton", {
+			BackgroundColor3 = C.dark,
+			BackgroundTransparency = 0.3,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = i,
+		}, grid)
+		corner(b, 6)
+		local ic = newIcon(b, tile[3], false, 16, C.sub)
+		ic.Position = UDim2.new(0, 10, 0.5, -10)
+		H.label(b, { Position = UDim2.new(0, 36, 0, 0), Size = UDim2.new(1, -42, 1, 0), Text = tile[1], TextSize = 13 })
+		b.MouseEnter:Connect(function()
+			b.BackgroundTransparency = 0.05
+			ic.TextColor3 = C.text
+		end)
+		b.MouseLeave:Connect(function()
+			b.BackgroundTransparency = 0.3
+			ic.TextColor3 = C.sub
+		end)
+		b.MouseButton1Click:Connect(function()
+			goToPage(tile[2])
+		end)
+	end
+end
+
+function UI.home.dayKey(offset)
+	return os.date("%Y-%m-%d", os.time() - offset * 86400)
+end
+
+function UI.home.stats()
+	local stats = settings.runStats
+	if type(stats.days) ~= "table" then
+		stats.days = {}
+	end
+	stats.total = tonumber(stats.total) or 0
+	stats.ok = tonumber(stats.ok) or 0
+	stats.fail = tonumber(stats.fail) or 0
+	stats.best = tonumber(stats.best) or 0
+	return stats
+end
+
+function UI.home.streak()
+	local H = UI.home
+	local days = H.stats().days
+	local count = 0
+	local first = (days[H.dayKey(0)] or 0) > 0 and 0 or 1
+	for i = first, 400 do
+		if (days[H.dayKey(i)] or 0) > 0 then
+			count += 1
+		else
+			break
+		end
+	end
+	return count
+end
+
+function UI.home.recordRun(good)
+	local H = UI.home
+	local stats = H.stats()
+	local key = H.dayKey(0)
+	stats.total += 1
+	if good then
+		stats.ok += 1
+	else
+		stats.fail += 1
+	end
+	stats.days[key] = (stats.days[key] or 0) + 1
+	local keys = {}
+	for k in pairs(stats.days) do
+		keys[#keys + 1] = k
+	end
+	if #keys > 60 then
+		table.sort(keys)
+		for i = 1, #keys - 60 do
+			stats.days[keys[i]] = nil
+		end
+	end
+	stats.best = math.max(stats.best, H.streak())
+	setSetting("runStats", stats)
+	H.renderActivity()
+end
+
+function UI.home.recordFail()
+	local H = UI.home
+	local stats = H.stats()
+	stats.ok = math.max(0, stats.ok - 1)
+	stats.fail += 1
+	setSetting("runStats", stats)
+	H.renderActivity()
+end
+
+function UI.home.buildActivity(row)
+	local H = UI.home
+	local card = H.card(186, row, 0.58)
+	card.Size = UDim2.new(0.58, -6, 1, 0)
+	card.LayoutOrder = 1
+	H.label(card, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 20), Text = "Activity", TextSize = 15 })
+	local flame = newIcon(card, { "flame" }, true, 28, Color3.fromRGB(255, 150, 60))
+	flame.Position = UDim2.new(0, 16, 0, 40)
+	H.streakValue = H.label(card, { Position = UDim2.new(0, 54, 0, 36), Size = UDim2.fromOffset(80, 34), Text = "0", TextSize = 30 })
+	H.streakLabel = H.label(card, {
+		Position = UDim2.new(0, 54, 0, 70),
+		Size = UDim2.fromOffset(90, 14),
+		Text = "day streak",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.bestLabel = H.label(card, {
+		Position = UDim2.new(0, 16, 0, 90),
+		Size = UDim2.fromOffset(130, 14),
+		Text = "Best: 0 days",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.chips = {}
+	for i, name in ipairs({ "Scripts run", "Success rate", "Failed", "Today" }) do
+		local x = 160 + ((i - 1) % 2) * 140
+		local y = 36 + math.floor((i - 1) / 2) * 44
+		H.chips[name] = H.label(card, { Position = UDim2.new(0, x, 0, y), Size = UDim2.fromOffset(130, 22), Text = "0", TextSize = 18 })
+		H.label(card, {
+			Position = UDim2.new(0, x, 0, y + 22),
+			Size = UDim2.fromOffset(130, 14),
+			Text = name,
+			TextColor3 = C.sub,
+			TextSize = 11,
+			FontFace = sans(Enum.FontWeight.Medium),
+		})
+	end
+	local week = new("Frame", { Position = UDim2.new(0, 16, 0, 124), Size = UDim2.new(1, -32, 0, 54), BackgroundTransparency = 1 }, card)
+	H.weekBars, H.weekLabels = {}, {}
+	for i = 1, 7 do
+		local col = new("Frame", { Position = UDim2.new((i - 1) / 7, 0, 0, 0), Size = UDim2.new(1 / 7, 0, 1, 0), BackgroundTransparency = 1 }, week)
+		local bar = new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.new(0.5, 0, 1, -16),
+			Size = UDim2.new(0.5, 0, 0, 3),
+			BackgroundColor3 = C.sub,
+			BackgroundTransparency = 0.6,
+			BorderSizePixel = 0,
+		}, col)
+		corner(bar, 3)
+		H.weekBars[i] = bar
+		H.weekLabels[i] = H.label(col, {
+			Position = UDim2.new(0, 0, 1, -14),
+			Size = UDim2.new(1, 0, 0, 14),
+			Text = "",
+			TextColor3 = C.sub,
+			TextSize = 10,
+			TextXAlignment = Enum.TextXAlignment.Center,
+			FontFace = sans(Enum.FontWeight.Medium),
+		})
+	end
+end
+
+function UI.home.renderActivity()
+	local H = UI.home
+	if not H.streakValue then
+		return
+	end
+	local stats = H.stats()
+	local streak = H.streak()
+	local today = stats.days[H.dayKey(0)] or 0
+	local key = table.concat({ streak, stats.best, stats.total, stats.ok, stats.fail, today, H.dayKey(0) }, "|")
+	if H.activityKey == key then
+		return
+	end
+	H.activityKey = key
+	H.streakValue.Text = tostring(streak)
+	H.streakLabel.Text = streak == 1 and "day streak" or "day streak"
+	H.bestLabel.Text = "Best: " .. math.max(stats.best, streak) .. (math.max(stats.best, streak) == 1 and " day" or " days")
+	H.chips["Scripts run"].Text = tostring(stats.total)
+	H.chips["Success rate"].Text = stats.total > 0 and (math.floor(stats.ok / stats.total * 100 + 0.5) .. "%") or "-"
+	H.chips["Failed"].Text = tostring(stats.fail)
+	H.chips["Today"].Text = tostring(today)
+	local top = 1
+	for i = 0, 6 do
+		top = math.max(top, stats.days[H.dayKey(i)] or 0)
+	end
+	for i = 1, 7 do
+		local ago = 7 - i
+		local count = stats.days[H.dayKey(ago)] or 0
+		local height = count > 0 and math.max(5, math.floor(32 * count / top)) or 3
+		local bar = H.weekBars[i]
+		bar.Size = UDim2.new(0.5, 0, 0, height)
+		bar.BackgroundColor3 = count > 0 and accent() or C.sub
+		bar.BackgroundTransparency = count > 0 and (ago == 0 and 0 or 0.35) or 0.7
+		local okLabel, label = pcall(function()
+			return os.date("%a", os.time() - ago * 86400)
+		end)
+		H.weekLabels[i].Text = ago == 0 and "Today" or (okLabel and label or "")
+	end
+end
+
+function UI.home.buildNews(row)
+	local H = UI.home
+	local card = H.card(186, row, 0.42)
+	card.Size = UDim2.new(0.42, -6, 1, 0)
+	card.LayoutOrder = 2
+	H.label(card, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -110, 0, 20), Text = "What's new", TextSize = 15 })
+	H.label(card, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -16, 0, 14),
+		Size = UDim2.fromOffset(90, 16),
+		Text = "v" .. tostring(UI.version),
+		TextColor3 = C.sub,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	for i, item in ipairs(H.news) do
+		local y = 42 + (i - 1) * 35
+		local dot = new("Frame", { Position = UDim2.new(0, 16, 0, y + 6), Size = UDim2.fromOffset(6, 6), BackgroundTransparency = 0, BorderSizePixel = 0 }, card)
+		corner(dot, 3)
+		accentize(dot)
+		H.label(card, { Position = UDim2.new(0, 32, 0, y), Size = UDim2.new(1, -48, 0, 18), Text = item[1], TextSize = 13 })
+		H.label(card, {
+			Position = UDim2.new(0, 32, 0, y + 17),
+			Size = UDim2.new(1, -48, 0, 14),
+			Text = item[2],
+			TextColor3 = C.sub,
+			TextSize = 11,
+			FontFace = sans(Enum.FontWeight.Medium),
+		})
+	end
+end
+
+function UI.home.renderRecent()
+	local H = UI.home
+	local list = UI.history.list
+	local keyParts = {}
+	for i = 1, math.min(#list, 4) do
+		keyParts[#keyParts + 1] = list[i].name .. tostring(list[i].ok) .. tostring(list[i].at)
+	end
+	local key = table.concat(keyParts, "|")
+	if H.recentKey == key then
+		return
+	end
+	H.recentKey = key
+	for _, r in ipairs(H.recentRows) do
+		r:Destroy()
+	end
+	H.recentRows = {}
+	H.recentEmpty.Visible = #list == 0
+	for i = 1, math.min(#list, 4) do
+		local entry = list[i]
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 44),
+			BackgroundColor3 = C.dark,
+			BackgroundTransparency = 0.3,
+			BorderSizePixel = 0,
+			LayoutOrder = i,
+		}, H.recentList)
+		corner(row, 6)
+		local dot = new("Frame", {
+			Position = UDim2.new(0, 12, 0.5, -4),
+			Size = UDim2.fromOffset(8, 8),
+			BackgroundColor3 = entry.ok and UI.extra.green or UI.extra.red,
+			BorderSizePixel = 0,
+		}, row)
+		corner(dot, 4)
+		H.label(row, { Position = UDim2.new(0, 28, 0, 6), Size = UDim2.new(1, -120, 0, 18), Text = entry.name, TextSize = 13 })
+		H.label(row, {
+			Position = UDim2.new(0, 28, 0, 24),
+			Size = UDim2.new(1, -120, 0, 14),
+			Text = UI.history.ago(entry.at) .. "  -  " .. #entry.source .. " chars",
+			TextColor3 = C.sub,
+			TextSize = 11,
+			FontFace = sans(Enum.FontWeight.Medium),
+		})
+		local run = H.smallBtn(row, "Run", 56, function()
+			runSource(entry.source, entry.name)
+		end, true)
+		run.AnchorPoint = Vector2.new(1, 0.5)
+		run.Position = UDim2.new(1, -8, 0.5, 0)
+		H.recentRows[#H.recentRows + 1] = row
+	end
+end
+
+function UI.home.identify()
+	local H = UI.home
+	local me = players.LocalPlayer
+	if me and H.identified ~= me.UserId then
+		H.identified = me.UserId
+		H.name = tostring(me.DisplayName ~= "" and me.DisplayName or me.Name)
+		H.sub.Text = "@" .. me.Name
+		task.spawn(function()
+			local ok, content = pcall(function()
+				return (players:GetUserThumbnailAsync(me.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100))
+			end)
+			if ok and type(content) == "string" and H.avatar.Parent then
+				H.avatar.Image = content
+			end
+		end)
+	end
+	if H.gameIcon.Image == "" and game.GameId ~= 0 then
+		H.gameIcon.Image = "rbxthumb://type=GameIcon&id=" .. tostring(game.GameId) .. "&w=150&h=150"
+	end
+	local greet = H.greeting() .. ", " .. H.name
+	if H.greet.Text ~= greet then
+		H.greet.Text = greet
+	end
+	local okClock, hm, date = pcall(function()
+		return os.date("%H:%M"), os.date("%A, %d %B %Y")
+	end)
+	if okClock then
+		if H.clockTime.Text ~= hm then
+			H.clockTime.Text = hm
+		end
+		if H.clock.Text ~= date then
+			H.clock.Text = date
+		end
+	end
+	local job = tostring(game.JobId)
+	local info = "Place " .. tostring(game.PlaceId) .. (job ~= "" and ("  -  Server " .. job:sub(1, 8)) or "")
+	if H.serverInfo.Text ~= info then
+		H.serverInfo.Text = info
+	end
+	local okCount, count = pcall(function()
+		return #players:GetPlayers() .. " of " .. players.MaxPlayers .. " players  -  up " .. string.format("%d:%02d", math.floor(workspace.DistributedGameTime / 60), math.floor(workspace.DistributedGameTime) % 60)
+	end)
+	if okCount and H.playersInfo.Text ~= count then
+		H.playersInfo.Text = count
+	end
+	H.paintBanner()
+end
+
+UI.home.toggles = {
+	{ "Fly", "lpFly" },
+	{ "Noclip", "lpNoclip" },
+	{ "Infinite Jump", "lpInfJump" },
+	{ "Speed", "lpSpeedOn" },
+	{ "Jump Power", "lpJumpOn" },
+	{ "Fullbright", "lpFullbright" },
+	{ "No Fog", "lpNoFog" },
+	{ "Click TP", "lpClickTp" },
+}
+
+UI.home.tips = {
+	"Press your Execute key (set in Settings) to run the script in the editor.",
+	"Click any lyric line to jump to that moment in the song.",
+	"Pin a script from Recent in the Executor to keep it in Quick Scripts.",
+	"Turn Everything Off in Local Player restores the game values in one click.",
+	"Server Hop picks a random public server that still has free slots.",
+	"Put a .lrc file next to a song to get synced lyrics instantly.",
+	"Ctrl+S in the Executor saves every open tab.",
+	"The sync offset in Settings fixes lyrics that run early or late.",
+	"Drag the tab strip or use the mouse wheel to reach tabs that do not fit.",
+}
+
+function UI.home.buildMiddle()
+	local H = UI.home
+	local row = H.row(112)
+
+	local toggles = H.card(112, row, 0.58)
+	toggles.Size = UDim2.new(0.58, -6, 1, 0)
+	toggles.LayoutOrder = 1
+	H.label(toggles, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 20), Text = "Quick toggles", TextSize = 15 })
+	local flow = new("Frame", { Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 1, -50), BackgroundTransparency = 1 }, toggles)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, flow)
+	H.toggleBtns = {}
+	for i, item in ipairs(H.toggles) do
+		local b = new("TextButton", {
+			AutomaticSize = Enum.AutomaticSize.X,
+			Size = UDim2.new(0, 0, 0, 28),
+			AutoButtonColor = false,
+			Text = item[1],
+			TextColor3 = C.text,
+			TextSize = 12,
+			FontFace = sans(),
+			BackgroundColor3 = C.dark,
+			BackgroundTransparency = 0.3,
+			LayoutOrder = i,
+		}, flow)
+		corner(b, 14)
+		padding(b, 0, 12, 0, 12)
+		H.toggleBtns[item[2]] = b
+		b.MouseButton1Click:Connect(function()
+			setSetting(item[2], not settings[item[2]])
+		end)
+		local function style()
+			local on = settings[item[2]] == true
+			b.BackgroundColor3 = on and accent() or C.dark
+			b.BackgroundTransparency = on and 0 or 0.3
+		end
+		style()
+		bind(item[2], style, true)
+		bind("accent", style, true)
+	end
+
+	local playing = H.card(112, row, 0.42)
+	playing.Size = UDim2.new(0.42, -6, 1, 0)
+	playing.LayoutOrder = 2
+	local open = new("TextButton", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "" }, playing)
+	open.MouseButton1Click:Connect(function()
+		goToPage("Music")
+	end)
+	H.label(playing, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 20), Text = "Now playing", TextSize = 15 })
+	H.nowTitle = H.label(playing, { Position = UDim2.new(0, 16, 0, 40), Size = UDim2.new(1, -80, 0, 20), Text = "Nothing playing", TextSize = 14 })
+	H.nowSub = H.label(playing, {
+		Position = UDim2.new(0, 16, 0, 60),
+		Size = UDim2.new(1, -80, 0, 16),
+		Text = "Open the Music tab to pick a song",
+		TextColor3 = C.sub,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	local back = new("Frame", {
+		Position = UDim2.new(0, 16, 1, -18),
+		Size = UDim2.new(1, -32, 0, 4),
+		BackgroundColor3 = Color3.new(0.2, 0.2, 0.25),
+		BorderSizePixel = 0,
+	}, playing)
+	corner(back, 2)
+	H.nowFill = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BorderSizePixel = 0 }, back)
+	accentize(H.nowFill)
+	corner(H.nowFill, 2)
+	H.nowPlay = new("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -14, 0, 38),
+		Size = UDim2.fromOffset(40, 40),
+		Text = "",
+		AutoButtonColor = false,
+	}, playing)
+	corner(H.nowPlay, 20)
+	accentize(H.nowPlay)
+	H.nowIcon = newIcon(H.nowPlay, { "play-large" }, true, 18, Color3.new(1, 1, 1))
+	H.nowIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	H.nowIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+	H.nowPlay.MouseButton1Click:Connect(function()
+		if musicCurrent then
+			musicTogglePlay()
+		else
+			goToPage("Music")
+		end
+	end)
+
+	local second = H.row(112)
+	local pinned = H.card(112, second, 0.58)
+	pinned.Size = UDim2.new(0.58, -6, 1, 0)
+	pinned.LayoutOrder = 1
+	H.pinnedTitle = H.label(pinned, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -32, 0, 20), Text = "Pinned scripts", TextSize = 15 })
+	H.pinnedList = new("Frame", { Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 1, -50), BackgroundTransparency = 1, ClipsDescendants = true }, pinned)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Wraps = true, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, H.pinnedList)
+	H.pinnedEmpty = H.label(pinned, {
+		Position = UDim2.new(0, 16, 0, 46),
+		Size = UDim2.new(1, -32, 0, 40),
+		Text = "No pinned scripts yet.\nPin one from Recent in the Executor tab.",
+		TextColor3 = C.sub,
+		TextSize = 13,
+		TextWrapped = true,
+		TextTruncate = Enum.TextTruncate.None,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	H.pinnedRows = {}
+
+	local tip = H.card(112, second, 0.42)
+	tip.Size = UDim2.new(0.42, -6, 1, 0)
+	tip.LayoutOrder = 2
+	H.label(tip, { Position = UDim2.new(0, 16, 0, 12), Size = UDim2.new(1, -110, 0, 20), Text = "Tip of the day", TextSize = 15 })
+	H.tipIndex = (math.floor(os.time() / 86400) % #H.tips) + 1
+	H.tipText = H.label(tip, {
+		Position = UDim2.new(0, 16, 0, 40),
+		Size = UDim2.new(1, -32, 0, 60),
+		Text = H.tips[H.tipIndex],
+		TextColor3 = C.sub,
+		TextSize = 13,
+		TextWrapped = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextTruncate = Enum.TextTruncate.None,
+		FontFace = sans(Enum.FontWeight.Medium),
+	})
+	local nextBtn = H.smallBtn(tip, "Next tip", 80, function()
+		H.tipIndex = (H.tipIndex % #H.tips) + 1
+		H.tipText.Text = H.tips[H.tipIndex]
+	end)
+	nextBtn.AnchorPoint = Vector2.new(1, 0)
+	nextBtn.Position = UDim2.new(1, -12, 0, 8)
+end
+
+function UI.home.renderPinned()
+	local H = UI.home
+	local parts = {}
+	for i, item in ipairs(settings.pinned) do
+		parts[#parts + 1] = tostring(type(item) == "table" and item.name or i)
+	end
+	local key = table.concat(parts, "|")
+	if H.pinnedKey == key then
+		return
+	end
+	H.pinnedKey = key
+	for _, r in ipairs(H.pinnedRows) do
+		r:Destroy()
+	end
+	H.pinnedRows = {}
+	H.pinnedEmpty.Visible = #settings.pinned == 0
+	H.pinnedTitle.Text = #settings.pinned > 0 and ("Pinned scripts  (" .. #settings.pinned .. ")") or "Pinned scripts"
+	for i, item in ipairs(settings.pinned) do
+		if i > 8 then
+			break
+		end
+		if type(item) == "table" and type(item.source) == "string" then
+			local b = new("TextButton", {
+				AutomaticSize = Enum.AutomaticSize.X,
+				Size = UDim2.new(0, 0, 0, 28),
+				AutoButtonColor = false,
+				Text = tostring(item.name),
+				TextColor3 = C.text,
+				TextSize = 12,
+				FontFace = sans(),
+				BackgroundColor3 = C.dark,
+				BackgroundTransparency = 0.3,
+				LayoutOrder = i,
+			}, H.pinnedList)
+			corner(b, 6)
+			padding(b, 0, 12, 0, 12)
+			b.MouseEnter:Connect(function()
+				b.BackgroundTransparency = 0.05
+			end)
+			b.MouseLeave:Connect(function()
+				b.BackgroundTransparency = 0.3
+			end)
+			b.MouseButton1Click:Connect(function()
+				runSource(item.source, item.name)
+			end)
+			H.pinnedRows[#H.pinnedRows + 1] = b
+		end
+	end
+end
+
+function UI.home.buildFooter()
+	local H = UI.home
+	H.order += 1
+	local foot = new("Frame", { Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, LayoutOrder = H.order }, UI.homePage)
+	H.footLeft = new("TextLabel", {
+		Size = UDim2.new(0.5, 0, 1, 0),
+		BackgroundTransparency = 1,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextTransparency = 0.55,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, foot)
+	UI.brand.bind(H.footLeft, function(name)
+		return name .. " v" .. tostring(UI.version)
+	end)
+	new("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.new(0.5, 0, 1, 0),
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = 'Created with <font family="rbxasset://LuaPackages/Packages/_Index/BuilderIcons/BuilderIcons/BuilderIcons.json" color="#eb4052">heart</font> by Bases',
+		TextColor3 = Color3.new(1, 1, 1),
+		TextTransparency = 0.55,
+		TextSize = 12,
+		FontFace = sans(Enum.FontWeight.Medium),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, foot)
+end
+
+function UI.home.build()
+	UI.home.buildTop()
+	UI.home.buildStats()
+	UI.home.buildBottom()
+	UI.home.renderRecent()
+	UI.home.buildMiddle()
+	local extra = UI.home.row(186)
+	UI.home.buildActivity(extra)
+	UI.home.buildNews(extra)
+	UI.home.renderActivity()
+	UI.home.buildFooter()
+	UI.home.renderPinned()
+	UI.home.identify()
+end
+
+function UI.home.refresh()
+	local H = UI.home
+	local function set(label, text)
+		if label and label.Text ~= text then
+			label.Text = text
+		end
+	end
+	local fps = H.fps
+	set(H.values.FPS, fps > 0 and tostring(math.floor(fps + 0.5)) or "-")
+	local ping
+	local ok = pcall(function()
+		ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	if not ok or type(ping) ~= "number" then
+		local okPing, value = pcall(function()
+			return players.LocalPlayer:GetNetworkPing() * 1000
+		end)
+		ping = okPing and value or nil
+	end
+	set(H.values.Ping, type(ping) == "number" and (math.floor(ping + 0.5) .. " ms") or "-")
+	local okCount, count, ratio = pcall(function()
+		local n, max = #players:GetPlayers(), math.max(players.MaxPlayers, 1)
+		return n .. " / " .. max, n / max
+	end)
+	set(H.values.Players, okCount and count or "-")
+	if okCount and H.playersFill then
+		H.playersFill.Size = UDim2.new(math.clamp(ratio, 0, 1), 0, 1, 0)
+	end
+	local okMem, mem = pcall(function()
+		return game:GetService("Stats"):GetTotalMemoryUsageMb()
+	end)
+	set(H.values.Memory, (okMem and type(mem) == "number") and (math.floor(mem + 0.5) .. " MB") or "-")
+	H.samples += 1
+	if H.samples % 2 == 0 then
+		if fps > 0 then
+			H.sparks.FPS.push(fps, 60)
+		end
+		if type(ping) == "number" then
+			H.sparks.Ping.push(ping, 100)
+		end
+		if okMem and type(mem) == "number" then
+			H.sparks.Memory.push(mem, 500)
+		end
+	end
+	H.renderRecent()
+	H.renderActivity()
+	H.renderPinned()
+	set(H.nowTitle, musicCurrent and UI.musicTitle.Text or "Nothing playing")
+	set(H.nowSub, musicCurrent and UI.musicSub.Text or "Open the Music tab to pick a song")
+	local length = musicSound.TimeLength
+	H.nowFill.Size = UDim2.new(length > 0 and math.clamp(musicSound.TimePosition / length, 0, 1) or 0, 0, 1, 0)
+	local icon = musicSound.IsPlaying and "pause-large" or "play-large"
+	if H.nowIcon.Text ~= icon then
+		H.nowIcon.Text = icon
+	end
+	H.identify()
+end
+
+UI.home.build()
+track(runService.Heartbeat:Connect(function(dt)
+	local H = UI.home
+	H.acc += dt
+	H.frames += 1
+	if H.acc < 0.5 then
+		return
+	end
+	H.fps = H.frames / H.acc
+	H.acc, H.frames = 0, 0
+	if UI.content.Visible and UI.homePage.Visible then
+		H.refresh()
+	end
+end))
+UI.homePage:GetPropertyChangedSignal("Visible"):Connect(function()
+	if UI.homePage.Visible then
+		UI.home.refresh()
+	end
+end)
+
+UI.localPage = new("ScrollingFrame", {
+	Name = "LocalPlayerPage",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	ScrollBarThickness = 4,
+	ScrollBarImageColor3 = Color3.fromRGB(150, 150, 165),
+	ScrollBarImageTransparency = 0.45,
+	ElasticBehavior = Enum.ElasticBehavior.Never,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	Visible = false,
+}, UI.pageContainer)
+new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 0) }, UI.localPage)
+padding(UI.localPage, 16, 24, 24, 24)
+
+UI.lp = { orig = {}, saved = nil, fly = nil, lighting = game:GetService("Lighting") }
+UI.lp.keys = {
+	"lpSpeedOn", "lpJumpOn", "lpInfJump", "lpFly", "lpNoclip", "lpBhop", "lpClickTp", "lpGravityOn",
+	"lpHipOn", "lpFreeze", "lpFovOn", "lpZoomOn", "lpFullbright", "lpNoFog", "lpTimeOn",
+}
+
+function UI.lp.character()
+	local lp = players.LocalPlayer
+	return lp and lp.Character
+end
+
+function UI.lp.humanoid()
+	local character = UI.lp.character()
+	return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+function UI.lp.root()
+	local character = UI.lp.character()
+	return character and (character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart)
+end
+
+function UI.lp.drive(slot, on, obj, prop, value)
+	local orig = UI.lp.orig
+	if on then
+		if obj == nil then
+			return
+		end
+		local entry = orig[slot]
+		if entry and entry.obj ~= obj then
+			entry = nil
+		end
+		if not entry then
+			entry = { obj = obj, prop = prop, value = obj[prop] }
+			orig[slot] = entry
+		end
+		if obj[prop] ~= value then
+			obj[prop] = value
+		end
+	else
+		local entry = orig[slot]
+		if entry then
+			orig[slot] = nil
+			pcall(function()
+				entry.obj[entry.prop] = entry.value
+			end)
+		end
+	end
+end
+
+function UI.lp.anyOn()
+	for _, key in ipairs(UI.lp.keys) do
+		if settings[key] == true then
+			return true
+		end
+	end
+	return false
+end
+
+function UI.lp.flyStop()
+	local f = UI.lp.fly
+	UI.lp.fly = nil
+	if not f then
+		return
+	end
+	pcall(function()
+		f.bv:Destroy()
+	end)
+	pcall(function()
+		f.bg:Destroy()
+	end)
+	pcall(function()
+		if f.hum and f.hum.Parent then
+			f.hum.PlatformStand = f.platform == true
+		end
+	end)
+end
+
+function UI.lp.flyStart()
+	local root, hum = UI.lp.root(), UI.lp.humanoid()
+	if not root or not hum then
+		return false
+	end
+	UI.lp.flyStop()
+	local bv = Instance.new("BodyVelocity")
+	bv.Name = "BasesFlyVelocity"
+	bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+	bv.Velocity = Vector3.new(0, 0, 0)
+	bv.Parent = root
+	local bg = Instance.new("BodyGyro")
+	bg.Name = "BasesFlyGyro"
+	bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+	bg.P = 20000
+	bg.D = 500
+	bg.CFrame = root.CFrame
+	bg.Parent = root
+	UI.lp.fly = { bv = bv, bg = bg, hum = hum, root = root, platform = hum.PlatformStand, vel = Vector3.new(0, 0, 0) }
+	hum.PlatformStand = true
+	return true
+end
+
+function UI.lp.flyDirection(cam, hum)
+	local uis = userInputService
+	local look, right = cam.CFrame.LookVector, cam.CFrame.RightVector
+	local dir = Vector3.new(0, 0, 0)
+	if uis:GetFocusedTextBox() then
+		return dir
+	end
+	if uis:IsKeyDown(Enum.KeyCode.W) then
+		dir = dir + look
+	end
+	if uis:IsKeyDown(Enum.KeyCode.S) then
+		dir = dir - look
+	end
+	if uis:IsKeyDown(Enum.KeyCode.D) then
+		dir = dir + right
+	end
+	if uis:IsKeyDown(Enum.KeyCode.A) then
+		dir = dir - right
+	end
+	if uis:IsKeyDown(Enum.KeyCode.Space) or uis:IsKeyDown(Enum.KeyCode.E) then
+		dir = dir + Vector3.new(0, 1, 0)
+	end
+	if uis:IsKeyDown(Enum.KeyCode.LeftShift) or uis:IsKeyDown(Enum.KeyCode.Q) then
+		dir = dir - Vector3.new(0, 1, 0)
+	end
+	if not uis.KeyboardEnabled and hum then
+		dir = dir + hum.MoveDirection
+	end
+	return dir
+end
+
+function UI.lp.flyStep(dt)
+	local L = UI.lp
+	if not settings.lpFly then
+		if L.fly then
+			L.flyStop()
+		end
+		return
+	end
+	local f = L.fly
+	if not f or not f.bv.Parent or f.root ~= L.root() or f.hum ~= L.humanoid() then
+		if not L.flyStart() then
+			return
+		end
+		f = L.fly
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local dir = L.flyDirection(cam, f.hum)
+	local target = Vector3.new(0, 0, 0)
+	if dir.Magnitude > 0.01 then
+		target = dir.Unit * settings.lpFlySpeed
+	end
+	f.vel = f.vel:Lerp(target, math.clamp(dt * 10, 0, 1))
+	f.bv.Velocity = f.vel
+	local pos = f.root.Position
+	f.bg.CFrame = CFrame.new(pos, pos + cam.CFrame.LookVector)
+end
+
+function UI.lp.noclipStep()
+	if not settings.lpNoclip then
+		return
+	end
+	local character = UI.lp.character()
+	if not character then
+		return
+	end
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") and part.CanCollide then
+			part.CanCollide = false
+		end
+	end
+end
+
+function UI.lp.step(dt)
+	local L = UI.lp
+	if not L.anyOn() and next(L.orig) == nil and not L.fly then
+		return
+	end
+	local hum = L.humanoid()
+	local lighting = L.lighting
+	L.drive("speed", settings.lpSpeedOn, hum, "WalkSpeed", settings.lpSpeed)
+	L.drive("jumpMode", settings.lpJumpOn, hum, "UseJumpPower", true)
+	L.drive("jump", settings.lpJumpOn, hum, "JumpPower", settings.lpJump)
+	L.drive("hip", settings.lpHipOn, hum, "HipHeight", settings.lpHip)
+	L.drive("freeze", settings.lpFreeze, L.root(), "Anchored", true)
+	L.drive("gravity", settings.lpGravityOn, workspace, "Gravity", settings.lpGravity)
+	L.drive("zoom", settings.lpZoomOn, players.LocalPlayer, "CameraMaxZoomDistance", settings.lpZoom)
+	L.drive("fbBrightness", settings.lpFullbright, lighting, "Brightness", 2)
+	L.drive("fbShadows", settings.lpFullbright, lighting, "GlobalShadows", false)
+	L.drive("fbAmbient", settings.lpFullbright, lighting, "Ambient", Color3.fromRGB(178, 178, 178))
+	L.drive("fbOutdoor", settings.lpFullbright, lighting, "OutdoorAmbient", Color3.fromRGB(178, 178, 178))
+	L.drive("fogEnd", settings.lpNoFog, lighting, "FogEnd", 1000000)
+	L.drive("atmosphere", settings.lpNoFog, lighting:FindFirstChildOfClass("Atmosphere"), "Density", 0)
+	L.drive("time", settings.lpTimeOn, lighting, "ClockTime", settings.lpTime)
+	if settings.lpBhop and hum and not userInputService:GetFocusedTextBox() and userInputService:IsKeyDown(Enum.KeyCode.Space) then
+		if hum.FloorMaterial ~= Enum.Material.Air then
+			hum.Jump = true
+		end
+	end
+	L.flyStep(dt)
+end
+
+function UI.lp.cameraStep()
+	local cam = workspace.CurrentCamera
+	UI.lp.drive("fov", settings.lpFovOn, cam, "FieldOfView", settings.lpFov)
+end
+
+function UI.lp.guard(name, fn, ...)
+	local ok, err = pcall(fn, ...)
+	if not ok then
+		local message = name .. ": " .. tostring(err)
+		if UI.lp.lastError ~= message then
+			UI.lp.lastError = message
+			notify("Local Player error - " .. message, "error")
+		end
+	end
+end
+
+function UI.lp.restoreAll()
+	UI.lp.flyStop()
+	local slots = {}
+	for slot in pairs(UI.lp.orig) do
+		slots[#slots + 1] = slot
+	end
+	for _, slot in ipairs(slots) do
+		local entry = UI.lp.orig[slot]
+		UI.lp.orig[slot] = nil
+		pcall(function()
+			entry.obj[entry.prop] = entry.value
+		end)
+	end
+end
+
+track(runService.Heartbeat:Connect(function(dt)
+	UI.lp.guard("update", UI.lp.step, dt)
+end))
+track(runService.Stepped:Connect(function()
+	UI.lp.guard("noclip", UI.lp.noclipStep)
+end))
+track(runService.RenderStepped:Connect(function()
+	UI.lp.guard("camera", UI.lp.cameraStep)
+end))
+track(userInputService.JumpRequest:Connect(function()
+	if settings.lpInfJump then
+		local hum = UI.lp.humanoid()
+		if hum then
+			hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		end
+	end
+end))
+pcall(function()
+	local mouse = players.LocalPlayer:GetMouse()
+	track(mouse.Button1Down:Connect(function()
+		if settings.lpClickTp and userInputService:IsKeyDown(Enum.KeyCode.LeftControl) and mouse.Hit then
+			local root = UI.lp.root()
+			if root then
+				root.CFrame = mouse.Hit + Vector3.new(0, 3, 0)
+			end
+		end
+	end))
+end)
+
+function UI.lp.need(what)
+	local root, hum = UI.lp.root(), UI.lp.humanoid()
+	if not root or not hum then
+		notify("No character to " .. what, "warn")
+		return nil
+	end
+	return root, hum
+end
+
+function UI.lp.position()
+	local root = UI.lp.root()
+	if not root then
+		notify("No character found", "warn")
+		return nil
+	end
+	return root.Position
+end
+
+function UI.lp.teleport(cf)
+	local root = UI.lp.root()
+	if not root then
+		notify("No character to teleport", "warn")
+		return false
+	end
+	root.CFrame = cf
+	root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+	return true
+end
+
+function UI.lp.respawnHere()
+	local root, hum = UI.lp.need("respawn")
+	if not root then
+		return
+	end
+	local cf = root.CFrame
+	local lp = players.LocalPlayer
+	local conn
+	conn = lp.CharacterAdded:Connect(function(character)
+		conn:Disconnect()
+		local newRoot = character:WaitForChild("HumanoidRootPart", 5)
+		if newRoot then
+			task.wait(0.15)
+			newRoot.CFrame = cf
+		end
+	end)
+	task.delay(12, function()
+		if conn.Connected then
+			conn:Disconnect()
+		end
+	end)
+	hum.Health = 0
+	notify("Respawning at your position", "info")
+end
+
+function UI.lp.spawnPoint()
+	for _, object in ipairs(workspace:GetDescendants()) do
+		if object:IsA("SpawnLocation") then
+			return object
+		end
+	end
+	return nil
+end
+
+function UI.lp.gotoCoords()
+	local pos = UI.lp.root() and UI.lp.root().Position or Vector3.new(0, 0, 0)
+	ov.modal({
+		title = "Teleport To Coordinates",
+		desc = "Type the X, Y and Z position you want to go to.",
+		okText = "Teleport",
+		okIcon = "person-teleport",
+		fields = {
+			{ key = "x", placeholder = "X", text = tostring(math.floor(pos.X + 0.5)) },
+			{ key = "y", placeholder = "Y", text = tostring(math.floor(pos.Y + 0.5)) },
+			{ key = "z", placeholder = "Z", text = tostring(math.floor(pos.Z + 0.5)) },
+		},
+		onSubmit = function(vals, api)
+			local x, y, z = tonumber(vals.x), tonumber(vals.y), tonumber(vals.z)
+			if not (x and y and z) then
+				api.status("Every field needs a number", C.red)
+				return false
+			end
+			if UI.lp.teleport(CFrame.new(x, y, z)) then
+				notify("Teleported to " .. x .. ", " .. y .. ", " .. z, "success")
+			end
+			return true
+		end,
+	})
+end
+
+function UI.lp.resetAll()
+	local count = 0
+	for _, key in ipairs(UI.lp.keys) do
+		if settings[key] then
+			count += 1
+			setSetting(key, false)
+		end
+	end
+	notify(count == 0 and "Nothing was turned on" or ("Turned off " .. count .. " feature(s)"), count == 0 and "info" or "success")
+end
+
+function UI.lp.build()
+	local R = UI.rows
+	local prevPage, prevOrder = R.page, R.order
+	R.page, R.order = UI.localPage, 0
+	local B = UI.build
+	local num = function(unit)
+		return function(v)
+			return v .. unit
+		end
+	end
+
+	B.section("Movement")
+	B.toggle("Walk Speed", "lpSpeedOn", "Overrides how fast you walk, using the value below", { "speedometer" })
+	B.slider("Walk Speed Value", "lpSpeed", 16, 300, 2, num(" studs/s"), { "speedometer" })
+	B.toggle("Jump Power", "lpJumpOn", "Overrides how high you jump, using the value below", { "arrow-up-from-line" })
+	B.slider("Jump Power Value", "lpJump", 50, 500, 5, num(""), { "arrow-up-from-line" })
+	B.toggle("Infinite Jump", "lpInfJump", "Jump again in mid air as many times as you want", { "arrow-medium-up" })
+	B.toggle("Bunny Hop", "lpBhop", "Hold Space to keep jumping every time you land", { "person-walking" })
+	B.toggle("Fly", "lpFly", "WASD to move, Space or E to go up, Shift or Q to go down", { "paper-airplane" })
+	B.slider("Fly Speed", "lpFlySpeed", 10, 300, 5, num(" studs/s"), { "paper-airplane" })
+	B.toggle("Noclip", "lpNoclip", "Walk through walls and other solid parts", { "person-circle-slash" })
+	B.toggle("Click Teleport", "lpClickTp", "Hold Left Ctrl and click to teleport to the spot", { "cursor" })
+	B.toggle("Freeze In Place", "lpFreeze", "Anchors your character so nothing can push you", { "pin" })
+	B.toggle("Custom Gravity", "lpGravityOn", "Overrides the world gravity, using the value below", { "dual-arrows-vertical" })
+	B.slider("Gravity Value", "lpGravity", 0, 400, 5, num(""), { "dual-arrows-vertical" })
+
+	B.section("Character")
+	B.toggle("Custom Hip Height", "lpHipOn", "Raises or lowers your character above the ground", { "ruler" })
+	B.slider("Hip Height Value", "lpHip", 0, 30, 1, num(" studs"), { "ruler" })
+	B.action("Full Heal", "Heal", function()
+		local _, hum = UI.lp.need("heal")
+		if hum then
+			hum.Health = hum.MaxHealth
+			notify("Health restored", "success")
+		end
+	end, "Sets your health back to the maximum", { "heart" })
+	B.action("Sit Or Stand", "Toggle", function()
+		local _, hum = UI.lp.need("move")
+		if hum then
+			hum.Sit = not hum.Sit
+		end
+	end, "Makes your character sit down or stand back up", { "person" })
+	B.action("Stop Moving", "Stop", function()
+		local root = UI.lp.need("stop")
+		if root then
+			root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		end
+	end, "Cancels all speed and spinning, useful when you get flung", { "stop-small" })
+	B.action("Respawn Here", "Respawn", UI.lp.respawnHere, "Resets your character and puts the new one at the same spot", { "arrow-rotate-right" })
+
+	B.section("Camera And World")
+	B.toggle("Field Of View", "lpFovOn", "Overrides the camera field of view, using the value below", { "video-camera" })
+	B.slider("Field Of View Value", "lpFov", 30, 120, 1, num(" deg"), { "video-camera" })
+	B.toggle("Max Zoom Distance", "lpZoomOn", "Lets the camera zoom out much further", { "binoculars" })
+	B.slider("Max Zoom Value", "lpZoom", 20, 2000, 10, num(" studs"), { "binoculars" })
+	B.toggle("Fullbright", "lpFullbright", "Removes shadows and darkness so everything is bright", { "flame" })
+	B.toggle("No Fog", "lpNoFog", "Pushes the fog away so you can see far", { "blur" })
+	B.toggle("Custom Time Of Day", "lpTimeOn", "Locks the clock to the value below", { "clock" })
+	B.slider("Time Of Day Value", "lpTime", 0, 24, 0.5, function(v)
+		return string.format("%02d:%02d", math.floor(v) % 24, (v % 1) * 60)
+	end, { "moon" })
+
+	B.section("Teleport")
+	B.action("Save Position", "Save", function()
+		local root = UI.lp.need("save")
+		if root then
+			UI.lp.saved = root.CFrame
+			local p = root.Position
+			notify(string.format("Saved %d, %d, %d", p.X, p.Y, p.Z), "success")
+		end
+	end, "Remembers where you stand until you close the menu", { "location-pin" })
+	B.action("Teleport To Saved", "Go", function()
+		if not UI.lp.saved then
+			notify("Save a position first", "warn")
+		elseif UI.lp.teleport(UI.lp.saved) then
+			notify("Teleported to the saved position", "success")
+		end
+	end, "Takes you back to the position you saved", { "person-teleport" })
+	B.action("Teleport To Spawn", "Go", function()
+		local spawn = UI.lp.spawnPoint()
+		if not spawn then
+			notify("This game has no spawn point", "warn")
+		elseif UI.lp.teleport(spawn.CFrame + Vector3.new(0, 5, 0)) then
+			notify("Teleported to the spawn", "success")
+		end
+	end, "Goes to the first spawn point in the game", { "house" })
+	B.action("Teleport To Coordinates", "Enter", UI.lp.gotoCoords, "Type an exact X, Y and Z to go to", { "crosshairs" })
+	B.action("Copy Position", "Copy", function()
+		local p = UI.lp.position()
+		if p then
+			UI.extra.copy(string.format("Vector3.new(%.2f, %.2f, %.2f)", p.X, p.Y, p.Z), "Position")
+		end
+	end, "Copies your position as a Vector3 you can paste into scripts", { "chain-link" })
+
+	B.section("Reset")
+	B.action("Turn Everything Off", "Turn Off", UI.lp.resetAll, "Switches off every feature on this tab and restores the game values", { "x" })
+	R.page, R.order = prevPage, prevOrder
+end
+
+UI.lp.build()
+
+onCleanup(function()
+	UI.lp.restoreAll()
+end)
+
+local pages = {
+	Home = UI.homePage,
+	Executor = UI.executorPage,
+	LocalPlayer = UI.localPage,
+	ScriptHub = UI.scriptHubPage,
+	Players = UI.playersPage,
+	Workspace = UI.workspacePage,
+	Music = UI.musicPage,
+	Console = UI.consolePage,
+	Terminal = UI.terminalPage,
+	Settings = UI.settingsPage,
+}
+local tabButtonsList = {}
+local currentTabBtn
+
+UI.anim.indX = UI.anim.spring(0, function(x)
+	UI.animatedBorder.Position = UDim2.new(0, x, 1, 0)
+end, 34, 0.88, 0.05)
+UI.anim.indW = UI.anim.spring(0, function(w)
+	UI.animatedBorder.Size = UDim2.new(0, w, 0, 2)
+end, 34, 0.88, 0.05)
+local function moveIndicator(btn, instant)
+	if not btn then
+		return
+	end
+	local scale = UI.scaleValue or 1
+	local x = (btn.AbsolutePosition.X - UI.tabsContainer.AbsolutePosition.X) / scale
+	local width = btn.AbsoluteSize.X / scale
+	local goalPos = UDim2.new(0, x, 1, 0)
+	local goalSize = UDim2.new(0, width, 0, 2)
+	if not instant and UI.anim.enabled() then
+		UI.anim.indX.to(x)
+		UI.anim.indW.to(width)
+		return
+	end
+	UI.anim.indX.cancel(x)
+	UI.anim.indW.cancel(width)
+	if instant then
+		UI.animatedBorder.Position = goalPos
+		UI.animatedBorder.Size = goalSize
+	else
+		tweenService:Create(UI.animatedBorder, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = goalPos, Size = goalSize }):Play()
+	end
+end
+
+local tabByPage = {}
+UI.anim.pageSpring = UI.anim.spring(0, function(off)
+	local shown = UI.anim.pageShown
+	if shown then
+		shown.Position = UDim2.new(0, 0, 0, off)
+	end
+end, 34, 0.9, 0.2)
+local switchTab = function(tabBtn, targetPage)
+	ov.close(true)
+	local previousTab = currentTabBtn
+	currentTabBtn = tabBtn
+	for _, child in ipairs(tabButtonsList) do
+		tweenService:Create(child, TweenInfo.new(0.2), { TextColor3 = C.sub }):Play()
+	end
+	tweenService:Create(tabBtn, TweenInfo.new(0.2), { TextColor3 = C.text }):Play()
+	UI.anim.pageSpring.cancel(0)
+	for _, page in pairs(pages) do
+		page.Visible = false
+		page.Position = UDim2.new(0, 0, 0, 0)
+	end
+	local shownPage = pages[targetPage]
+	shownPage.Visible = true
+	if previousTab ~= tabBtn and UI.anim.enabled() then
+		UI.anim.pageShown = shownPage
+		shownPage.Position = UDim2.new(0, 0, 0, 16)
+		UI.anim.pageSpring.cancel(16)
+		UI.anim.pageSpring.to(0)
+	end
+	moveIndicator(tabBtn, false)
+	if targetPage == "ScriptHub" and not hubLoaded then
+		fetchScripts("")
+	elseif targetPage == "Executor" then
+		task.defer(relayout)
+	elseif targetPage == "Players" then
+		updatePlayers()
+	elseif targetPage == "Workspace" then
+		refreshWorkspace()
+	elseif targetPage == "Music" then
+		rescanMusic()
+	end
+end
+goToPage = function(name)
+	if tabByPage[name] then
+		switchTab(tabByPage[name], name)
+	end
+end
+
+local function createTabBtn(tabName, targetPage, isFirst)
+	local textBtn = new("TextButton", {
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.new(0, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = tabName,
+		TextColor3 = isFirst and C.text or C.sub,
+		TextSize = 16,
+		FontFace = sans(),
+	}, UI.tabScroll)
+	padding(textBtn, 0, 8, 0, 8)
+	table.insert(tabButtonsList, textBtn)
+	tabByPage[targetPage] = textBtn
+	textBtn.MouseButton1Click:Connect(function()
+		switchTab(textBtn, targetPage)
+	end)
+	if isFirst then
+		currentTabBtn = textBtn
+		task.spawn(function()
+			task.wait(0.05)
+			moveIndicator(textBtn, true)
+		end)
+	end
+	return textBtn
+end
+
+createTabBtn("Home", "Home", true)
+createTabBtn("Executor", "Executor", false)
+createTabBtn("Local Player", "LocalPlayer", false)
+createTabBtn("Script Hub", "ScriptHub", false)
+createTabBtn("Players", "Players", false)
+createTabBtn("Workspace", "Workspace", false)
+createTabBtn("Music", "Music", false)
+createTabBtn("Console", "Console", false)
+createTabBtn("Terminal", "Terminal", false)
+createTabBtn("Settings", "Settings", false)
+
+function UI.hubOpen()
+	return UI.content.Visible and not UI.anim.closing
+end
+UI.anim.hubSpring = UI.anim.spring(0, function(off)
+	local r = UI.anim.rest
+	if r then
+		UI.windowFrame.Position = UDim2.new(r.X.Scale, r.X.Offset, r.Y.Scale, r.Y.Offset + off)
+	end
+end, 34, 0.86, 0.3)
+function UI.anim.restore()
+	local r = UI.anim.rest
+	UI.anim.rest = nil
+	if r then
+		UI.windowFrame.Position = r
+	end
+end
+local function setHubVisible(state)
+	if UI.intro and UI.intro.active then
+		UI.intro.openAfter = state
+		return
+	end
+	ov.close(true)
+	local A = UI.anim
+	local animated = A.enabled() and state ~= UI.hubOpen()
+	if animated then
+		local fresh = A.rest == nil
+		if fresh then
+			A.rest = UI.windowFrame.Position
+		end
+		if state then
+			A.closing = false
+			UI.content.Visible = true
+			if fresh then
+				A.hubSpring.snap(26)
+			end
+			A.hubSpring.to(0, function()
+				UI.anim.restore()
+				moveIndicator(currentTabBtn, true)
+				relayout()
+			end)
+		else
+			A.closing = true
+			if fresh then
+				A.hubSpring.snap(0)
+			end
+			A.hubSpring.to(16, function()
+				A.closing = false
+				UI.content.Visible = false
+				UI.anim.restore()
+			end)
+		end
+	else
+		A.closing = false
+		A.hubSpring.cancel(0)
+		UI.anim.restore()
+		UI.content.Visible = state
+	end
+	if state then
+		if not animated then
+			task.defer(function()
+				moveIndicator(currentTabBtn, true)
+				relayout()
+			end)
+		end
+		if UI.scriptHubPage.Visible and not hubLoaded then
+			fetchScripts("")
+		end
+	end
+end
+
+UI.closeButton.MouseButton1Click:Connect(function()
+	setHubVisible(false)
+end)
+UI.dotsBtn.MouseButton1Click:Connect(function()
+	goToPage("Settings")
+end)
+UI.searchTopBtn.MouseButton1Click:Connect(function()
+	goToPage("ScriptHub")
+	UI.searchBox:CaptureFocus()
+end)
+
+local dragging = false
+local dragInput, dragStart, startPos
+
+function UI.beginDrag(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = UI.windowFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+				if settings.rememberPos then
+					local wp = UI.windowFrame.Position
+					setSetting("winX", wp.X.Offset)
+					setSetting("winY", wp.Y.Offset)
+				end
+			end
+		end)
+	end
+end
+function UI.trackDragInput(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end
+UI.topBar.InputBegan:Connect(UI.beginDrag)
+UI.topBar.InputChanged:Connect(UI.trackDragInput)
+UI.titleBox.InputBegan:Connect(function(input)
+	if not UI.titleBox:IsFocused() then
+		UI.beginDrag(input)
+	end
+end)
+UI.titleBox.InputChanged:Connect(UI.trackDragInput)
+
+track(userInputService.InputChanged:Connect(function(input)
+	if input == dragInput and dragging then
+		local delta = input.Position - dragStart
+		UI.windowFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+	if env.BasesSliderDrag and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		env.BasesSliderDrag(input.Position.X)
+	end
+end))
+track(userInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		env.BasesSliderDrag = nil
+	end
+end))
+
+track(userInputService.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then
+		return
+	end
+
+	if capturingKey then
+		if input.KeyCode == Enum.KeyCode.Escape then
+			capturingKey(nil)
+		elseif input.KeyCode == Enum.KeyCode.Backspace then
+			capturingKey({ Name = "None" })
+		elseif input.KeyCode ~= Enum.KeyCode.Unknown then
+			capturingKey(input.KeyCode)
+		end
+		return
+	end
+
+	local focused = userInputService:GetFocusedTextBox()
+
+	if input.KeyCode.Name == settings.toggleKey and not focused then
+		setHubVisible(not UI.hubOpen())
+		return
+	end
+	if not focused then
+		local keyName = input.KeyCode.Name
+		if keyName ~= "None" and keyName ~= "Unknown" then
+			if keyName == settings.musicPlayKey then
+				musicTogglePlay()
+				return
+			elseif keyName == settings.musicNextKey then
+				musicNext()
+				return
+			elseif keyName == settings.musicPrevKey then
+				musicPrev()
+				return
+			end
+		end
+	end
+	if not UI.content.Visible then
+		return
+	end
+
+	local ctrl = userInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+		or userInputService:IsKeyDown(Enum.KeyCode.RightControl)
+		or userInputService:IsKeyDown(Enum.KeyCode.LeftMeta)
+		or userInputService:IsKeyDown(Enum.KeyCode.RightMeta)
+	local shift = userInputService:IsKeyDown(Enum.KeyCode.LeftShift) or userInputService:IsKeyDown(Enum.KeyCode.RightShift)
+	local kc = input.KeyCode
+	local onExecutor = UI.executorPage.Visible
+
+	if kc.Name == settings.execKey and onExecutor then
+		execute()
+	elseif ctrl and kc == Enum.KeyCode.S then
+		local n = saveDirty(true)
+		notify("Saved " .. n .. " script(s)", "success")
+	elseif ctrl and kc == Enum.KeyCode.F and onExecutor then
+		openFind()
+	elseif focused == UI.editorBox then
+		if ctrl and kc == Enum.KeyCode.Z then
+			if shift then
+				redo()
+			else
+				undo()
+			end
+		elseif ctrl and kc == Enum.KeyCode.Y then
+			redo()
+		elseif ctrl and kc == Enum.KeyCode.Slash then
+			toggleComment()
+		elseif kc == Enum.KeyCode.Tab then
+			local before = UI.editorBox.Text
+			task.delay(0.05, function()
+				if UI.editorBox:IsFocused() and UI.editorBox.Text == before and lastText == before then
+					local cur = UI.editorBox.CursorPosition
+					if cur >= 1 then
+						local spaces = string.rep(" ", settings.tabSize)
+						commitEdit(before:sub(1, cur - 1) .. spaces .. before:sub(cur), cur + #spaces)
+					end
+				end
+			end)
+		end
+	end
+end))
+
+local idleConn
+bind("antiIdle", function(v)
+	if v then
+		if not idleConn then
+			idleConn = players.LocalPlayer.Idled:Connect(function()
+				virtualUser:CaptureController()
+				virtualUser:ClickButton2(Vector2.new())
+			end)
+		end
+	elseif idleConn then
+		idleConn:Disconnect()
+		idleConn = nil
+	end
+end)
+onCleanup(function()
+	if idleConn then
+		idleConn:Disconnect()
+		idleConn = nil
+	end
+end)
+
+local function applyFps()
+	if setfpscap then
+		pcall(setfpscap, settings.unlockFps and settings.fpsCap or 60)
+	end
+end
+bind("unlockFps", applyFps, true)
+bind("fpsCap", function()
+	if settings.unlockFps then
+		applyFps()
+	end
+end, true)
+
+bind("highlight", refreshEditor, true)
+bind("fontSize", applyFont, true)
+bind("lineNumbers", function()
+	relayout()
+end, true)
+bind("highlightLine", updateCursorUI, true)
+bind("indentGuides", function()
+	IND.guideKey = nil
+	IND.drawGuides(true)
+end, true)
+bind("bracketMatch", function()
+	IND.drawBrackets()
+end, true)
+bind("errorIndicators", function(v)
+	if v then
+		IND.lintText = nil
+		IND.update()
+	else
+		IND.setError(nil, nil)
+	end
+end, true)
+bind("accent", function()
+	IND.guideKey = nil
+	IND.update()
+end, true)
+bind("statusBar", function(v)
+	UI.statusBar.Visible = v
+end)
+bind("topmost", function(v)
+	UI.basesScreen.DisplayOrder = v and 2000 or 100
+end)
+bind("opacity", function(v)
+	UI.content.BackgroundTransparency = v
+end)
+bind("uiScale", function()
+	UI.scaleToken = (UI.scaleToken or 0) + 1
+	local mine = UI.scaleToken
+	task.delay(0.12, function()
+		if running and mine == UI.scaleToken then
+			UI.applyScale()
+		end
+	end)
+end, true)
+do
+	local cam = workspace.CurrentCamera
+	if cam then
+		pcall(function()
+			track(cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+				UI.applyScale()
+			end))
+		end)
+	end
+end
+UI.modalBtn = new("TextButton", {
+	Name = "ModalHandler",
+	Size = UDim2.new(0, 0, 0, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Text = "",
+	Selectable = false,
+	ZIndex = 1,
+}, UI.content)
+bind("modalHandler", function(v)
+	pcall(function()
+		UI.modalBtn.Modal = v == true
+	end)
+end)
+bind("accent", function()
+	applyAccentTargets()
+	renderScriptTabs()
+	UI.caseBtn.TextColor3 = caseSensitive and accent() or C.text
+	if findOpen then
+		drawMatches()
+	end
+end, true)
+
+local function waitPath(root, names, timeout)
+	local obj = root
+	for _, name in ipairs(names) do
+		obj = obj and obj:WaitForChild(name, timeout)
+	end
+	return obj
+end
+
+local injectedButtons = {}
+
+local function InjectButton(nineDot)
+	local canvas = waitPath(nineDot, { "ScrollingFrame", "MainCanvas" }, 10)
+	if not canvas then
+		return
+	end
+	local stale = canvas:FindFirstChild("BasesMenu")
+	if stale then
+		stale:Destroy()
+	end
+	canvas.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+	local newBtn = new("ImageButton", {
+		Name = "BasesMenu",
+		Size = UDim2.new(1, 0, 0, 56),
+		AutoButtonColor = false,
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 1,
+	}, canvas)
+	table.insert(injectedButtons, newBtn)
+	corner(newBtn, 8)
+
+	local rowLabel = new("Frame", { Name = "RowLabel", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, newBtn)
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 8) }, rowLabel)
+	padding(rowLabel, 0, 8, 0, 8)
+
+	local iconHost = new("Frame", { Name = "IconHost", Size = UDim2.new(0, 44, 0, 44), BackgroundTransparency = 1 }, rowLabel)
+	local iconFrame = new("Frame", { Name = "IntegrationIconFrame", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1 }, iconHost)
+	new("UIListLayout", { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center }, iconFrame)
+	local icon = new("ImageLabel", {
+		Name = "IntegrationIcon",
+		Size = UDim2.new(0, 24, 0, 24),
+		BackgroundTransparency = 1,
+		Image = UI.assets.logo,
+		ImageTransparency = 1,
+	}, iconFrame)
+
+	local labelHost = new("Frame", { Name = "Label", Size = UDim2.new(0, 0, 1, 0), BackgroundTransparency = 1 }, rowLabel)
+	new("UIFlexItem", {}, labelHost)
+	local text = new("TextLabel", {
+		Name = "StyledTextLabel",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		FontFace = sans(),
+		Text = UI.brand.name,
+		TextSize = 20,
+		TextColor3 = C.text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTransparency = 1,
+	}, labelHost)
+	new("UITextSizeConstraint", { MinTextSize = 20, MaxTextSize = 20 }, text)
+	UI.brand.bind(text, tostring)
+
+	local function getSiblingLabel()
+		for _, child in ipairs(canvas:GetChildren()) do
+			if child:IsA("ImageButton") and child ~= newBtn then
+				local lbl = child:FindFirstChild("RowLabel")
+				local lHost = lbl and lbl:FindFirstChild("Label")
+				local st = lHost and lHost:FindFirstChild("StyledTextLabel")
+				if st then
+					return st
+				end
+			end
+		end
+		return nil
+	end
+
+	task.spawn(function()
+		local siblingText
+		repeat
+			siblingText = getSiblingLabel()
+			if not siblingText then
+				task.wait(0.05)
+			end
+		until siblingText or not newBtn.Parent or not running
+		if siblingText and newBtn.Parent then
+			icon.ImageTransparency = siblingText.TextTransparency
+			text.TextTransparency = siblingText.TextTransparency
+			siblingText:GetPropertyChangedSignal("TextTransparency"):Connect(function()
+				icon.ImageTransparency = siblingText.TextTransparency
+				text.TextTransparency = siblingText.TextTransparency
+			end)
+		end
+	end)
+
+	newBtn.MouseEnter:Connect(function()
+		newBtn.BackgroundTransparency = 0.95
+	end)
+	newBtn.MouseLeave:Connect(function()
+		newBtn.BackgroundTransparency = 1
+	end)
+	newBtn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			newBtn.BackgroundTransparency = 0.6
+		end
+	end)
+	newBtn.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			newBtn.BackgroundTransparency = 1
+		end
+	end)
+	newBtn.MouseButton1Click:Connect(function()
+		setHubVisible(not UI.hubOpen())
+	end)
+end
+
+task.spawn(function()
+	local ok, subMenuHost = pcall(function()
+		return waitPath(coreGui, { "TopBarApp", "TopBarApp", "UnibarLeftFrame", "UnibarMenu", "SubMenuHost" }, 15)
+	end)
+	if not ok or not subMenuHost or not running then
+		return
+	end
+	local function tryInject(child)
+		if child.Name == "nine_dot" then
+			pcall(InjectButton, child)
+		end
+	end
+	local existing = subMenuHost:FindFirstChild("nine_dot")
+	if existing then
+		task.spawn(tryInject, existing)
+	end
+	track(subMenuHost.ChildAdded:Connect(function(child)
+		task.spawn(tryInject, child)
+	end))
+end)
+
+local menuContainer, origMenuPos, menuIsOpen, lockConn, currentTween, bgLabel
+local openPosition = UDim2.new(0.2, 52, 0.4, 0)
+local closedPosition = UDim2.new(0.2, 52, 1.5, 0)
+local menuTweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
+local function unlockMenu()
+	if lockConn then
+		lockConn:Disconnect()
+		lockConn = nil
+	end
+end
+local function applyMenuLayout()
+	if not menuContainer then
+		return
+	end
+	unlockMenu()
+	if not settings.moveMenu then
+		return
+	end
+	local target = menuIsOpen and openPosition or closedPosition
+	local tw = tweenService:Create(menuContainer, menuTweenInfo, { Position = target })
+	currentTween = tw
+	tw:Play()
+	if menuIsOpen then
+		tw.Completed:Once(function()
+			if currentTween == tw and menuIsOpen and settings.moveMenu and running then
+				lockConn = menuContainer:GetPropertyChangedSignal("Position"):Connect(function()
+					menuContainer.Position = openPosition
+				end)
+			end
+		end)
+	end
+end
+
+bind("moveMenu", function(v)
+	if not menuContainer then
+		return
+	end
+	if v then
+		if menuIsOpen then
+			applyMenuLayout()
+		end
+	else
+		unlockMenu()
+		currentTween = nil
+		if origMenuPos then
+			menuContainer.Position = origMenuPos
+		end
+	end
+end, true)
+bind("bgImage", function(v)
+	if bgLabel then
+		bgLabel.Visible = v
+	end
+end, true)
+bind("bgTransparency", function(v)
+	if bgLabel then
+		bgLabel.ImageTransparency = v
+	end
+end, true)
+
+task.spawn(function()
+	local mc = waitPath(coreGui, { "RobloxGui", "SettingsClippingShield", "SettingsShield", "MenuContainer" }, 15)
+	if not mc or not running then
+		return
+	end
+	menuContainer = mc
+	origMenuPos = mc.Position
+
+	local stale = mc:FindFirstChild("SunriseImage")
+	if stale then
+		stale:Destroy()
+	end
+	bgLabel = new("ImageLabel", {
+		Name = "SunriseImage",
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		ImageTransparency = settings.bgTransparency,
+		ZIndex = -10,
+		ScaleType = Enum.ScaleType.Crop,
+		Visible = settings.bgImage,
+	}, mc)
+	corner(bgLabel, 10)
+	if getcustomasset and hasFS then
+		task.spawn(function()
+			pcall(function()
+				if isfile("sunrise-bali-jungle.jpg") then
+					bgLabel.Image = getcustomasset("sunrise-bali-jungle.jpg")
+				end
+			end)
+		end)
+	end
+
+	track(guiService.MenuOpened:Connect(function()
+		menuIsOpen = true
+		applyMenuLayout()
+	end))
+	track(guiService.MenuClosed:Connect(function()
+		menuIsOpen = false
+		applyMenuLayout()
+	end))
+end)
+
+onCleanup(function()
+	unlockMenu()
+	currentTween = nil
+	if menuContainer and origMenuPos then
+		pcall(function()
+			menuContainer.Position = origMenuPos
+		end)
+	end
+	if bgLabel then
+		bgLabel:Destroy()
+	end
+	for _, b in ipairs(injectedButtons) do
+		if b then
+			b:Destroy()
+		end
+	end
+end)
+
+bind("theme", function(v)
+	local t = themes[v] or themes[1]
+	for k, c in pairs(t.colors) do
+		HL[k] = c
+	end
+	refreshEditor()
+end)
+bind("editorHeight", function(v)
+	UI.editorHolder.Size = UDim2.new(1, 0, 0, v)
+	relayout()
+end)
+local function applyWindowPos()
+	if settings.rememberPos then
+		UI.windowFrame.Position = UDim2.new(0.5, settings.winX, 0.5, settings.winY)
+	end
+end
+
+local function mergeSavedScripts(loaded, listed)
+	local taken = {}
+	for _, d in ipairs(loaded) do
+		taken[d.name:lower()] = true
+	end
+	local all = {}
+	for _, d in ipairs(loaded) do
+		all[#all + 1] = d
+	end
+	local created = false
+	if #loaded == 0 then
+		if listed == false then
+			for _, n in ipairs(settings.tabOrder) do
+				if type(n) == "string" then
+					taken[n:lower()] = true
+				end
+			end
+		end
+		local name, n = "Script 1", 1
+		while taken[name:lower()] do
+			n += 1
+			name = "Script " .. n
+		end
+		all[1] = { name = name, source = welcomeSource(), dirty = listed ~= false }
+		created = true
+	end
+	local order = {}
+	for i, n in ipairs(settings.tabOrder) do
+		if type(n) == "string" then
+			order[n] = i
+		end
+	end
+	table.sort(all, function(a, b)
+		local ia, ib = order[a.name] or math.huge, order[b.name] or math.huge
+		if ia ~= ib then
+			return ia < ib
+		end
+		return a.name:lower() < b.name:lower()
+	end)
+	for i = #scriptData, 1, -1 do
+		scriptData[i] = nil
+	end
+	for i, d in ipairs(all) do
+		scriptData[i] = d
+	end
+	scriptsLoaded = true
+	UI.editorBox.TextEditable = true
+	loadTab(1)
+	if created and listed ~= false then
+		saveTabOrder()
+	end
+end
+
+applyAllSettings()
+applyWindowPos()
+applyFont()
+if not scriptsLoaded then
+	UI.editorBox.TextEditable = false
+end
+loadTab(1)
+
+env.BasesMenuCleanup = function()
+	if settings.autoSave then
+		pcall(saveDirty)
+	end
+	running = false
+	env.BasesSliderDrag = nil
+	for _, c in ipairs(connections) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+	for _, fn in ipairs(extraCleanup) do
+		pcall(fn)
+	end
+	pcall(function()
+		UI.basesScreen:Destroy()
+	end)
+	env.BasesMenuCleanup = nil
+end
+UI.intro = { active = false, openAfter = nil, skip = false, clock = os.clock, gui = nil, blur = nil, tint = nil, conn = nil, inputConn = nil }
+UI.intro.config = {
+	Icon = UI.assets.logo,
+	Color = Color3.fromRGB(51, 95, 255),
+	IconSize = 128,
+	LoadTime = 4,
+	MaxLoadTime = 12,
+	RealLoading = true,
+	MaxAssets = 150,
+	IntroTime = 3,
+	BlurSize = 22,
+	ShowLoader = true,
+	ShowPercent = false,
+	Shadow = true,
+	ShadowOpacity = 0.45,
+	SwipeAngle = 14.43,
+	SwipeTime = 1.2,
+	SwipeLeftToRight = true,
+}
+
+function UI.intro.wait(seconds)
+	task.wait(seconds)
+end
+
+function UI.intro.frame()
+	return runService.RenderStepped:Wait()
+end
+
+function UI.intro.destroy()
+	local intro = UI.intro
+	if intro.conn then
+		pcall(function()
+			intro.conn:Disconnect()
+		end)
+		intro.conn = nil
+	end
+	if intro.inputConn then
+		pcall(function()
+			intro.inputConn:Disconnect()
+		end)
+		intro.inputConn = nil
+	end
+	for _, key in ipairs({ "gui", "blur", "tint" }) do
+		local obj = intro[key]
+		intro[key] = nil
+		if obj then
+			pcall(function()
+				obj:Destroy()
+			end)
+		end
+	end
+end
+
+function UI.intro.play()
+	local intro = UI.intro
+	local cfg = intro.config
+	local clock = intro.clock
+	local lighting = game:GetService("Lighting")
+	local contentProvider = game:GetService("ContentProvider")
+	local GUI_NAME, BLUR_NAME, TINT_NAME = "BasesIntro", "BasesIntroBlur", "BasesIntroTint"
+	local S = cfg.IconSize
+	local SINE, QUINT, QUART = Enum.EasingStyle.Sine, Enum.EasingStyle.Quint, Enum.EasingStyle.Quart
+	local OUT, INOUT = Enum.EasingDirection.Out, Enum.EasingDirection.InOut
+
+	local function tween(obj, time, props, style, direction)
+		local t = tweenService:Create(obj, TweenInfo.new(time, style or QUINT, direction or OUT), props)
+		t:Play()
+		return t
+	end
+
+	local function makeShadow(parent, blurRadius, offsetY, spread)
+		if not cfg.Shadow then
+			return nil
+		end
+		local ok, shadow = pcall(function()
+			local s = Instance.new("UIShadow")
+			s.Color = Color3.new(0, 0, 0)
+			s.BlurRadius = UDim.new(0, blurRadius)
+			s.Offset = UDim2.fromOffset(0, offsetY)
+			s.Spread = UDim2.fromOffset(spread, spread)
+			s.Transparency = 1
+			s.ZIndex = -1
+			s.Parent = parent
+			return s
+		end)
+		return ok and shadow or nil
+	end
+
+	local function mount(gui)
+		if syn and syn.protect_gui then
+			pcall(syn.protect_gui, gui)
+		end
+		local mounted = false
+		if gethui then
+			mounted = pcall(function()
+				gui.Parent = gethui()
+			end)
+		end
+		if not mounted or not gui.Parent then
+			pcall(function()
+				gui.Parent = coreGui
+			end)
+		end
+		if not gui.Parent then
+			gui.Parent = players.LocalPlayer:WaitForChild("PlayerGui")
+		end
+	end
+
+	local function clearOld(parent, name)
+		local old = parent and parent:FindFirstChild(name)
+		if old then
+			old:Destroy()
+		end
+	end
+	intro.destroy()
+	pcall(clearOld, coreGui, GUI_NAME)
+	pcall(clearOld, players.LocalPlayer and players.LocalPlayer:FindFirstChild("PlayerGui"), GUI_NAME)
+	if gethui then
+		local ok, hui = pcall(gethui)
+		if ok then
+			pcall(clearOld, hui, GUI_NAME)
+		end
+	end
+	pcall(clearOld, lighting, BLUR_NAME)
+	pcall(clearOld, lighting, TINT_NAME)
+
+	local blur = Instance.new("BlurEffect")
+	blur.Name = BLUR_NAME
+	blur.Size = 0
+	blur.Parent = lighting
+	intro.blur = blur
+
+	local tint = Instance.new("ColorCorrectionEffect")
+	tint.Name = TINT_NAME
+	tint.TintColor = Color3.new(1, 1, 1)
+	tint.Saturation = 0
+	tint.Brightness = 0
+	tint.Parent = lighting
+	intro.tint = tint
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = GUI_NAME
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 2147483647
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	intro.gui = gui
+
+	local background = Instance.new("Frame")
+	background.Name = "Background"
+	background.Size = UDim2.fromScale(1, 1)
+	background.BackgroundColor3 = cfg.Color
+	background.BackgroundTransparency = 1
+	background.BorderSizePixel = 0
+	background.Parent = gui
+
+	local SOFT = 0.35
+	local SWEEP = 0.9
+
+	local gradient = Instance.new("UIGradient")
+	gradient.Rotation = cfg.SwipeAngle
+	if cfg.SwipeLeftToRight then
+		gradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(0.5 - SOFT / 2, 1),
+			NumberSequenceKeypoint.new(0.5 + SOFT / 2, 0),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		gradient.Offset = Vector2.new(-SWEEP, 0)
+	else
+		gradient.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.5 - SOFT / 2, 0),
+			NumberSequenceKeypoint.new(0.5 + SOFT / 2, 1),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		gradient.Offset = Vector2.new(SWEEP, 0)
+	end
+	gradient.Parent = background
+
+	local icon = Instance.new("ImageLabel")
+	icon.Name = "Icon"
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromOffset(S * 0.88, S * 0.88)
+	icon.BackgroundTransparency = 1
+	icon.Image = cfg.Icon
+	icon.ImageTransparency = 1
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.Parent = background
+
+	local iconShadow = makeShadow(icon, 28, 6, 0)
+	if iconShadow then
+		Instance.new("UICorner", icon).CornerRadius = UDim.new(0.25, 0)
+	end
+
+	local trackBar = Instance.new("Frame")
+	trackBar.Name = "LoaderTrack"
+	trackBar.AnchorPoint = Vector2.new(0.5, 0)
+	trackBar.Position = UDim2.new(0.5, 0, 0.5, S / 2 + 36)
+	trackBar.Size = UDim2.fromOffset(120, 2)
+	trackBar.BackgroundColor3 = Color3.new(1, 1, 1)
+	trackBar.BackgroundTransparency = 1
+	trackBar.BorderSizePixel = 0
+	trackBar.Visible = cfg.ShowLoader
+	trackBar.Parent = background
+	Instance.new("UICorner", trackBar).CornerRadius = UDim.new(1, 0)
+	local trackShadow = makeShadow(trackBar, 10, 2, 0)
+
+	local fill = Instance.new("Frame")
+	fill.Name = "LoaderFill"
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.BackgroundColor3 = Color3.new(1, 1, 1)
+	fill.BackgroundTransparency = 1
+	fill.BorderSizePixel = 0
+	fill.Parent = trackBar
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local percent = Instance.new("TextLabel")
+	percent.Name = "Percent"
+	percent.AnchorPoint = Vector2.new(0.5, 0)
+	percent.Position = UDim2.new(0.5, 0, 0.5, S / 2 + 48)
+	percent.Size = UDim2.fromOffset(120, 14)
+	percent.BackgroundTransparency = 1
+	percent.Font = Enum.Font.GothamMedium
+	percent.TextSize = 11
+	percent.TextColor3 = Color3.new(1, 1, 1)
+	percent.TextTransparency = 1
+	percent.Text = "0%"
+	percent.Visible = cfg.ShowPercent
+	percent.Parent = background
+
+	mount(gui)
+
+	intro.skip = false
+	intro.inputConn = userInputService.InputBegan:Connect(function(input)
+		local kind = input.UserInputType
+		if kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch or kind == Enum.UserInputType.Keyboard then
+			intro.skip = true
+		end
+	end)
+
+	pcall(function()
+		contentProvider:PreloadAsync({ icon })
+	end)
+
+	local function buildSchedule(total)
+		local rng = Random.new()
+		local n = rng:NextInteger(9, 13)
+		local chunks, gSum, tSum = {}, 0, 0
+		for i = 1, n do
+			local k = i / n
+			local g = rng:NextNumber(0.5, 1.5) * (1.4 - 0.9 * k)
+			local d = rng:NextNumber(0.5, 1.5) * (0.6 + 0.9 * k)
+			local s = (i < n and rng:NextNumber() < 0.45) and rng:NextNumber(0.15, 0.7) or 0
+			chunks[i] = { g = g, d = d, s = s }
+			gSum = gSum + g
+			tSum = tSum + d + s
+		end
+		local lead = 0.12 * total
+		local scaleT = (total - lead) / tSum
+		local segs = {}
+		local t, p = lead, 0
+		for _, c in ipairs(chunks) do
+			local d = c.d * scaleT
+			local gain = c.g / gSum
+			segs[#segs + 1] = { t0 = t, t1 = t + d, p0 = p, p1 = p + gain }
+			t = t + d + c.s * scaleT
+			p = p + gain
+		end
+		segs[#segs].p1 = 1
+		return function(time)
+			if time <= lead then
+				return 0
+			end
+			for _, sg in ipairs(segs) do
+				if time < sg.t0 then
+					return sg.p0
+				end
+				if time < sg.t1 then
+					local a = (time - sg.t0) / (sg.t1 - sg.t0)
+					a = 1 - (1 - a) * (1 - a)
+					return sg.p0 + (sg.p1 - sg.p0) * a
+				end
+			end
+			return 1
+		end
+	end
+
+	local function startRealLoading()
+		if not cfg.RealLoading then
+			return function()
+				return 1
+			end
+		end
+		local real = 0
+		task.spawn(function()
+			pcall(function()
+				local t0 = clock()
+				while not game:IsLoaded() and clock() - t0 < 6 and running do
+					task.wait(0.1)
+				end
+				real = 0.15
+				local lp = players.LocalPlayer
+				if lp then
+					local t1 = clock()
+					while not lp.Character and clock() - t1 < 2 and running do
+						task.wait(0.1)
+					end
+				end
+				real = 0.3
+				local list = {}
+				for _, d in ipairs(game:GetService("Workspace"):GetDescendants()) do
+					if d:IsA("Decal") or d:IsA("Texture") or d:IsA("MeshPart") or d:IsA("Sound") or d:IsA("ParticleEmitter") then
+						list[#list + 1] = d
+						if #list >= cfg.MaxAssets then
+							break
+						end
+					end
+				end
+				if #list == 0 then
+					return
+				end
+				local done = 0
+				contentProvider:PreloadAsync(list, function()
+					done = done + 1
+					real = 0.3 + 0.7 * math.min(done / #list, 1)
+				end)
+			end)
+			real = 1
+		end)
+		return function()
+			return real
+		end
+	end
+
+	local startClock = clock()
+	intro.conn = runService.RenderStepped:Connect(function()
+		local t = clock() - startClock
+		icon.Position = UDim2.new(0.5, 0, 0.5, math.sin(t * 1.5) * 3)
+		percent.Text = string.format("%d%%", math.floor(fill.Size.X.Scale * 100))
+	end)
+
+	local function apply(p)
+		local e = p * p * (3 - 2 * p)
+		fill.Size = UDim2.fromScale(p, 1)
+		tint.TintColor = Color3.new(1, 1, 1):Lerp(cfg.Color, e)
+		tint.Saturation = -0.15 * e
+		tint.Brightness = 0.08 * e
+		blur.Size = cfg.BlurSize * e
+		icon.ImageTransparency = 1 - e
+		if iconShadow then
+			iconShadow.Transparency = 1 - cfg.ShadowOpacity * e
+		end
+		local sz = S * (0.88 + 0.12 * e)
+		icon.Size = UDim2.fromOffset(sz, sz)
+	end
+	apply(0)
+
+	tween(trackBar, 0.6, { BackgroundTransparency = 0.85 }, QUINT, OUT)
+	if trackShadow then
+		tween(trackShadow, 0.6, { Transparency = 1 - cfg.ShadowOpacity }, QUINT, OUT)
+	end
+	tween(fill, 0.6, { BackgroundTransparency = 0.05 }, QUINT, OUT)
+	tween(percent, 0.6, { TextTransparency = 0.45 }, QUINT, OUT)
+
+	local sim = buildSchedule(cfg.LoadTime)
+	local readReal = startRealLoading()
+	local loadStart = clock()
+	local progress = 0
+
+	while running do
+		local dt = intro.frame()
+		local elapsed = clock() - loadStart
+		local real = (elapsed > cfg.MaxLoadTime) and 1 or readReal()
+		local target = math.min(sim(elapsed), real)
+		if intro.skip then
+			target = 1
+		end
+		progress = progress + (target - progress) * (1 - math.exp(-dt * 7))
+		if target >= 1 and 1 - progress < 0.002 then
+			progress = 1
+		end
+		apply(progress)
+		if progress >= 1 then
+			break
+		end
+	end
+	if not running then
+		return
+	end
+
+	intro.wait(0.15)
+
+	local function dropShadow(s)
+		if not s then
+			return
+		end
+		tween(s, 0.5, { Transparency = 1 }, SINE, INOUT).Completed:Connect(function()
+			s.Enabled = false
+		end)
+	end
+	dropShadow(iconShadow)
+	dropShadow(trackShadow)
+
+	tween(trackBar, 0.5, { BackgroundTransparency = 1 }, SINE, INOUT)
+	tween(fill, 0.5, { BackgroundTransparency = 1 }, SINE, INOUT)
+	tween(percent, 0.5, { TextTransparency = 1 }, SINE, INOUT)
+	tween(background, 0.9, { BackgroundTransparency = 0 }, SINE, INOUT)
+
+	local holdTime = intro.skip and 0.35 or cfg.IntroTime
+	tween(icon, holdTime, { Size = UDim2.fromOffset(S * 1.12, S * 1.12) }, QUINT, OUT)
+	local holdStart = clock()
+	while running and clock() - holdStart < holdTime and not intro.skip do
+		intro.wait(0.05)
+	end
+
+	tween(icon, 0.8, { ImageTransparency = 1, Size = UDim2.fromOffset(S * 1.2, S * 1.2) }, QUINT, OUT)
+	local sweepEnd = cfg.SwipeLeftToRight and SWEEP or -SWEEP
+	tween(gradient, cfg.SwipeTime, { Offset = Vector2.new(sweepEnd, 0) }, QUART, INOUT)
+	tween(blur, 1.2, { Size = 0 }, SINE, INOUT)
+	tween(tint, 1.3, { TintColor = Color3.new(1, 1, 1), Saturation = 0, Brightness = 0 }, SINE, INOUT).Completed:Wait()
+end
+
+function UI.intro.finish()
+	local intro = UI.intro
+	intro.active = false
+	local want = intro.openAfter
+	intro.openAfter = nil
+	if running and want ~= nil then
+		setHubVisible(want)
+	end
+end
+
+function UI.intro.start(openAfter)
+	local intro = UI.intro
+	if intro.active then
+		return
+	end
+	intro.active = true
+	intro.openAfter = openAfter
+	task.spawn(function()
+		local ok, err = pcall(intro.play)
+		if not ok then
+			warn("[Bases] Intro failed: " .. tostring(err))
+		end
+		intro.destroy()
+		intro.finish()
+	end)
+end
+
+onCleanup(function()
+	UI.intro.destroy()
+end)
+if not settings.introSeen then
+	setSetting("introSeen", true)
+	UI.intro.start(settings.openOnStart == true)
+elseif settings.openOnStart then
+	setHubVisible(true)
+end
+task.defer(function()
+	UI.anim.ready = true
+end)
+
+task.spawn(function()
+	if not hasFS then
+		startupMusic()
+		return
+	end
+	pcall(fsEnsureStorage)
+	if not settings.storageMigrated and pcall(fsMigrateStorage) then
+		setSetting("storageMigrated", true)
+	end
+	local ok = pcall(function()
+		local loaded, listed = loadSavedScripts()
+		mergeSavedScripts(loaded, listed)
+	end)
+	if not ok and not scriptsLoaded then
+		mergeSavedScripts({}, false)
+	end
+	startupMusic()
+end)
+
+end)()
